@@ -23,6 +23,21 @@ target_compile_definitions(lead_lag_strategy_benchmark
         AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS
 )
 
+add_executable(lead_lag_strategy_production_benchmark
+    lead_lag_strategy_benchmark.cpp
+)
+
+target_link_libraries(lead_lag_strategy_production_benchmark
+    PRIVATE
+        aquila_strategy
+        benchmark::benchmark_main
+)
+
+target_compile_definitions(lead_lag_strategy_production_benchmark
+    PRIVATE
+        AQUILA_LEAD_LAG_STRATEGY_ENABLE_BENCHMARK_SEED_HOOKS
+)
+
 add_executable(lead_lag_runtime_benchmark
     lead_lag_runtime_benchmark.cpp
 )
@@ -70,6 +85,25 @@ target_link_libraries(lead_lag_feedback_runtime_benchmark
 target_compile_definitions(lead_lag_feedback_runtime_benchmark
     PRIVATE
         AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS
+)
+
+add_executable(lead_lag_feedback_production_benchmark
+    lead_lag_feedback_runtime_benchmark.cpp
+)
+
+target_link_libraries(lead_lag_feedback_production_benchmark
+    PRIVATE
+        aquila_bitget
+        aquila_evaluation
+        aquila_gate
+        aquila_strategy
+        benchmark::benchmark_main
+        nova
+)
+
+target_compile_definitions(lead_lag_feedback_production_benchmark
+    PRIVATE
+        AQUILA_LEAD_LAG_STRATEGY_ENABLE_BENCHMARK_SEED_HOOKS
 )
 
 add_executable(lead_lag_group_container_benchmark

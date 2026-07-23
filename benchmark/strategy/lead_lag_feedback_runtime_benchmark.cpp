@@ -38,9 +38,11 @@ constexpr std::size_t kOrderCapacity = 8;
 constexpr std::size_t kLatencyIterations = 4096;
 constexpr std::size_t kActualPairCount = 30;
 constexpr std::size_t kDenseActiveOrderCount = 120;
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 constexpr std::size_t kFeedbackStageCount =
     static_cast<std::size_t>(StrategyFeedbackStageForTest::kCount);
 constexpr std::size_t kFeedbackProfileSegmentCount = kFeedbackStageCount + 1U;
+#endif
 
 [[nodiscard]] core::OrderPlaceRequest BenchmarkPlaceRequest(
     std::uint64_t local_order_id = 0, std::uint64_t group_id = 0) noexcept {
@@ -63,6 +65,7 @@ constexpr std::size_t kFeedbackProfileSegmentCount = kFeedbackStageCount + 1U;
   return request;
 }
 
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 struct FeedbackStageCapture {
   std::array<std::uint64_t, kFeedbackStageCount> timestamps_ns{};
 };
@@ -96,6 +99,7 @@ class FeedbackStageObserverGuard {
   FeedbackStageObserverGuard& operator=(const FeedbackStageObserverGuard&) =
       delete;
 };
+#endif
 
 struct SharedOrderSessionState {
   std::uint64_t place_calls{0};
@@ -703,6 +707,7 @@ void RunLeadLagStrategyTerminalFillLatency(benchmark::State& state,
   state.SetItemsProcessed(state.iterations());
 }
 
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 void SetFeedbackProfileSegmentCounters(benchmark::State& state,
                                        std::string_view name,
                                        std::vector<std::uint64_t> samples_ns) {
@@ -800,6 +805,7 @@ void BM_LeadLagStrategyGateTerminalFillStageProfile(benchmark::State& state) {
   }
   state.SetItemsProcessed(state.iterations());
 }
+#endif
 
 void BM_LeadLagStrategyGateTerminalFillLatency(benchmark::State& state) {
   RunLeadLagStrategyTerminalFillLatency(state, Exchange::kGate);
@@ -1118,10 +1124,12 @@ BENCHMARK(BM_LeadLagStrategyBitgetTerminalFillLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 BENCHMARK(BM_LeadLagStrategyGateTerminalFillStageProfile)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
+#endif
 BENCHMARK(BM_LeadLagLogOrderFeedbackLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
