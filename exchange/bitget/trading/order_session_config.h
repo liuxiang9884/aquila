@@ -24,6 +24,7 @@ struct OrderSessionConfig {
   std::string category{"usdt-futures"};
   std::string position_mode{"one_way_mode"};
   std::string margin_mode{"crossed"};
+  ClientOidRunNamespace client_oid_run_namespace;
   websocket::ConnectionConfig connection;
   OrderSessionCredentialsConfig credentials;
   std::size_t request_map_capacity{kDefaultOrderRequestMapCapacity};

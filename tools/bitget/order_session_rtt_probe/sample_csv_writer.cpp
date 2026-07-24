@@ -231,6 +231,7 @@ bool WriteRunMetadata(const std::filesystem::path& path,
                       const ProbeConfig& config, std::size_t session_count,
                       std::string_view sample_csv_path,
                       std::string_view connection_observed_csv_path,
+                      std::string_view client_oid_run_namespace,
                       std::string* error) {
   if (!EnsureParentDirectory(path, error)) {
     return false;
@@ -253,6 +254,8 @@ bool WriteRunMetadata(const std::filesystem::path& path,
       "  \"feedback_strategy_id\": {},\n"
       "  \"order_mode\": \"{}\",\n"
       "  \"order_symbol\": \"{}\",\n"
+      "  \"client_oid_schema\": \"a1\",\n"
+      "  \"client_oid_run_namespace\": \"{}\",\n"
       "  \"rest_guard_implemented\": false,\n"
       "  \"sample_csv_path\": \"{}\",\n"
       "  \"connection_observed_csv_path\": \"{}\"\n"
@@ -261,7 +264,8 @@ bool WriteRunMetadata(const std::filesystem::path& path,
       JsonEscape(config.name), session_count,
       config.sampling.samples_per_session, config.feedback.strategy_id,
       JsonEscape(config.order.order_mode), JsonEscape(config.order.symbol),
-      JsonEscape(sample_csv_path), JsonEscape(connection_observed_csv_path));
+      JsonEscape(client_oid_run_namespace), JsonEscape(sample_csv_path),
+      JsonEscape(connection_observed_csv_path));
   const bool ok = WriteText(file, metadata, "Bitget RTT run metadata", error);
   if (std::fclose(file) != 0 && ok) {
     if (error != nullptr) {

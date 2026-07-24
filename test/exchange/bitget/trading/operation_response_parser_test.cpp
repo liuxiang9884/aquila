@@ -33,7 +33,7 @@ TEST(BitgetOperationResponseParserTest, ParsesPlaceSuccessAck) {
     "id":"72057594037927945",
     "category":"usdt-futures",
     "topic":"place-order",
-    "args":[{"symbol":"BTCUSDT","orderId":"123456789","clientOid":"a-42","cTime":"1750034397008"}],
+    "args":[{"symbol":"BTCUSDT","orderId":"123456789","clientOid":"a1-0123456789AB-0000000000016","cTime":"1750034397008"}],
     "code":"0",
     "msg":"success",
     "connId":"connection-1",
@@ -49,7 +49,9 @@ TEST(BitgetOperationResponseParserTest, ParsesPlaceSuccessAck) {
   EXPECT_EQ(response.request_id.type, OrderRequestType::kPlaceOrder);
   EXPECT_EQ(response.request_id.sequence, 9U);
   ASSERT_TRUE(response.client_oid.ok);
+  EXPECT_EQ(response.client_oid.run_namespace.View(), "0123456789AB");
   EXPECT_EQ(response.client_oid.local_order_id, 42U);
+  EXPECT_EQ(response.client_oid_text, "a1-0123456789AB-0000000000016");
   EXPECT_EQ(response.exchange_order_id, 123456789U);
   EXPECT_EQ(response.creation_time_ms, 1750034397008LL);
   EXPECT_EQ(response.exchange_ns, 1750034397076000000LL);
@@ -61,7 +63,7 @@ TEST(BitgetOperationResponseParserTest, ParsesCancelSuccessAck) {
     "event":"trade",
     "id":"144115188075855882",
     "topic":"cancel-order",
-    "args":[{"orderId":"123456789","clientOid":"a-42"}],
+    "args":[{"orderId":"123456789","clientOid":"a1-0123456789AB-0000000000016"}],
     "code":"0",
     "msg":"Success",
     "connId":"connection-1",
@@ -133,7 +135,7 @@ TEST(BitgetOperationResponseParserTest, MapsUnclassifiedErrorToUnknown) {
 
 TEST(BitgetOperationResponseParserTest, SupportsPaddedInput) {
   static constexpr std::string_view payload =
-      R"({"event":"trade","id":"72057594037927945","topic":"place-order","args":[{"orderId":null,"clientOid":"a-42"}],"code":"0","msg":"success","ts":"1750034397076"})";
+      R"({"event":"trade","id":"72057594037927945","topic":"place-order","args":[{"orderId":null,"clientOid":"a1-0123456789AB-0000000000016"}],"code":"0","msg":"success","ts":"1750034397076"})";
   std::array<char, payload.size() + simdjson::SIMDJSON_PADDING> scratch{};
   std::copy(payload.begin(), payload.end(), scratch.begin());
   simdjson::ondemand::parser parser;
@@ -160,19 +162,19 @@ TEST(BitgetOperationResponseParserTest, RejectsMalformedOrMissingFields) {
       OperationParseStatus::kUnexpectedShape);
   EXPECT_EQ(
       ParseOperationResponse(
-          R"({"event":"trade","id":"not-a-number","topic":"place-order","args":[{"clientOid":"a-42"}],"code":"0","ts":"1"})")
+          R"({"event":"trade","id":"not-a-number","topic":"place-order","args":[{"clientOid":"a1-0123456789AB-0000000000016"}],"code":"0","ts":"1"})")
           .parse_status,
       OperationParseStatus::kUnexpectedShape);
   EXPECT_EQ(
       ParseOperationResponse(
-          R"({"event":"trade","id":"72057594037927945","topic":"place-order","args":[{"orderId":{},"clientOid":"a-42"}],"code":"0","ts":"1"})")
+          R"({"event":"trade","id":"72057594037927945","topic":"place-order","args":[{"orderId":{},"clientOid":"a1-0123456789AB-0000000000016"}],"code":"0","ts":"1"})")
           .parse_status,
       OperationParseStatus::kUnexpectedShape);
 }
 
 TEST(BitgetOperationResponseParserTest, RejectsTimestampOverflow) {
   static constexpr std::string_view payload =
-      R"({"event":"trade","id":"72057594037927945","topic":"place-order","args":[{"clientOid":"a-42"}],"code":"0","ts":"18446744073709551615"})";
+      R"({"event":"trade","id":"72057594037927945","topic":"place-order","args":[{"clientOid":"a1-0123456789AB-0000000000016"}],"code":"0","ts":"18446744073709551615"})";
 
   EXPECT_EQ(ParseOperationResponse(payload).parse_status,
             OperationParseStatus::kUnexpectedShape);

@@ -198,6 +198,11 @@ struct PreflightResult {
   if (!order_session.ok) {
     return {.error = order_session.error};
   }
+  if (!order_session.value.client_oid_run_namespace.IsConfigured()) {
+    return {.error =
+                "Bitget RTT probe requires a run-scoped "
+                "client_oid_run_namespace"};
+  }
   if (order_session.value.category != "usdt-futures" ||
       order_session.value.position_mode != "one_way_mode" ||
       order_session.value.margin_mode != "crossed") {
@@ -386,7 +391,8 @@ class LiveSessionState final : public LiveSessionStateBase {
         data_reader_(std::move(data_reader_config)),
         feedback_queue_(config.sampling.feedback_queue_capacity),
         session_(order_session_config_.connection,
-                 bitget::LoginCredentials(credentials), handler_,
+                 bitget::LoginCredentials(credentials),
+                 order_session_config_.client_oid_run_namespace, handler_,
                  order_session_config_.request_map_capacity,
                  order_session_config_.order_id_cache_capacity),
         runner_(config_, connection_, session_index, session_count,
@@ -657,9 +663,10 @@ void StopAndJoin(
     NOVA_ERROR("connection_csv_open_error={}", error);
     return 1;
   }
-  if (!probe::WriteRunMetadata(metadata_path, config, plan.connection_count,
-                               sample_csv_path.string(),
-                               connection_csv_path.string(), &error)) {
+  if (!probe::WriteRunMetadata(
+          metadata_path, config, plan.connection_count,
+          sample_csv_path.string(), connection_csv_path.string(),
+          order_session_config.client_oid_run_namespace.View(), &error)) {
     NOVA_ERROR("run_metadata_error={}", error);
     return 1;
   }
@@ -753,9 +760,11 @@ void StopAndJoin(
   NOVA_INFO(
       "bitget_order_session_rtt_probe execute=true run_id={} symbol={} "
       "session_count={} samples_per_session={} duration_sec={:.3f} "
+      "client_oid_run_namespace={} "
       "rest_guard_implemented=false dedicated_account_confirmed=true",
       config.run_id, config.order.symbol, sessions.size(),
-      config.sampling.samples_per_session, duration_sec);
+      config.sampling.samples_per_session, duration_sec,
+      order_session_config.client_oid_run_namespace.View());
 
   probe::SequentialCoordinator coordinator(
       sessions.size(), config.sampling.samples_per_session,
@@ -946,11 +955,13 @@ void StopAndJoin(
     NOVA_INFO(
         "bitget_order_session_rtt_probe_preflight symbol={} "
         "order_session_config={} data_reader_config={} feedback_shm_config={} "
+        "client_oid_run_namespace={} "
         "credentials_read=false shm_attached=false websocket_created=false "
         "orders_sent=0 rest_guard_implemented=false",
         config.order.symbol, config.inputs.order_session_config.string(),
         config.inputs.data_reader_config.string(),
-        config.feedback.shm_config.string());
+        config.feedback.shm_config.string(),
+        preflight.order_session_config.client_oid_run_namespace.View());
     return 0;
   }
 

@@ -14,6 +14,10 @@
 namespace aquila::bitget {
 namespace {
 
+ClientOidRunNamespace TestRunNamespace() {
+  return ClientOidRunNamespace::Parse("0123456789AB").value();
+}
+
 std::unique_ptr<OrderFeedbackShmChannel> MakeChannel() {
   auto channel = std::make_unique<OrderFeedbackShmChannel>();
   order_feedback_shm_detail::InitializeLaneHeaders(*channel);
@@ -38,19 +42,24 @@ TEST(BitgetOrderFeedbackShmIntegrationTest, ParserRoutesToStrategyLane) {
   constexpr std::uint8_t kStrategyId = 3;
   const std::uint64_t local_order_id =
       LocalOrderIdCodec::Encode(kStrategyId, 42);
+  std::array<char, ClientOidCodec::kEncodedSize> client_oid_buffer{};
+  const std::string_view client_oid = ClientOidCodec::Format(
+      TestRunNamespace(), local_order_id, client_oid_buffer);
   const std::string payload = fmt::format(
-      R"({{"action":"snapshot","arg":{{"instType":"UTA","topic":"order"}},"data":[{{"category":"usdt-futures","orderId":"9988","clientOid":"a-{}","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"0","avgPrice":"0","orderStatus":"new","updatedTime":"1750034397076"}}]}})",
-      local_order_id);
+      R"({{"action":"snapshot","arg":{{"instType":"UTA","topic":"order"}},"data":[{{"clientOid":"a1-ZYXWVTSRQPNM-0000000000001"}},{{"category":"usdt-futures","orderId":"9988","clientOid":"{}","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"0","avgPrice":"0","orderStatus":"new","updatedTime":"1750034397076"}}]}})",
+      client_oid);
   simdjson::ondemand::parser parser;
   OrderFeedbackParserStats stats;
 
   const OrderFeedbackParseResult result = ParseBitgetOrderFeedbackMessage(
       payload, 0, 1'750'034'397'080'123'456LL, parser, stats,
+      TestRunNamespace(),
       [&publisher](const OrderFeedbackEvent& event) noexcept {
         return publisher.Publish(event);
       });
 
   ASSERT_EQ(result.status, OrderFeedbackParseStatus::kOk);
+  EXPECT_EQ(stats.foreign_run_namespace_orders_ignored, 1U);
   for (std::uint8_t lane_index = 0; lane_index < kMaxOrderFeedbackStrategies;
        ++lane_index) {
     OrderFeedbackEvent event{};

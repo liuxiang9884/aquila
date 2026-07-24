@@ -120,17 +120,19 @@ class OrderSessionRuntimeAdapter {
 
   OrderSessionRuntimeAdapter(
       websocket::ConnectionConfig config, LoginCredentials credentials,
+      ClientOidRunNamespace client_oid_run_namespace,
       std::size_t request_map_capacity = kDefaultOrderRequestMapCapacity,
       std::size_t order_id_cache_capacity = kDefaultOrderIdCacheCapacity)
-      : impl_(std::make_unique<Impl>(std::move(config), std::move(credentials),
-                                     request_map_capacity,
-                                     order_id_cache_capacity)) {}
+      : impl_(std::make_unique<Impl>(
+            std::move(config), std::move(credentials), client_oid_run_namespace,
+            request_map_capacity, order_id_cache_capacity)) {}
 
   OrderSessionRuntimeAdapter(OrderSessionConfig config,
                              LoginCredentials credentials)
       : OrderSessionRuntimeAdapter(
             std::move(config.connection), std::move(credentials),
-            config.request_map_capacity, config.order_id_cache_capacity) {}
+            config.client_oid_run_namespace, config.request_map_capacity,
+            config.order_id_cache_capacity) {}
 
   ~OrderSessionRuntimeAdapter() {
     Stop();
@@ -223,8 +225,10 @@ class OrderSessionRuntimeAdapter {
   class Impl {
    public:
     Impl(websocket::ConnectionConfig config, LoginCredentials credentials,
+         ClientOidRunNamespace client_oid_run_namespace,
          std::size_t request_map_capacity, std::size_t order_id_cache_capacity)
-        : session_(std::move(config), std::move(credentials), response_handler_,
+        : session_(std::move(config), std::move(credentials),
+                   client_oid_run_namespace, response_handler_,
                    request_map_capacity, order_id_cache_capacity) {}
 
     ~Impl() {

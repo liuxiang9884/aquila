@@ -83,6 +83,10 @@ constexpr std::string_view kGateLoginSuccess = R"json({
 constexpr std::string_view kBitgetLoginSuccess =
     R"({"event":"login","code":"0","msg":""})";
 
+bitget::ClientOidRunNamespace BitgetRunNamespace() {
+  return bitget::ClientOidRunNamespace::Parse("0123456789AB").value();
+}
+
 struct LiveSymbolSpec {
   std::string_view symbol;
   std::int32_t symbol_id{0};
@@ -323,7 +327,7 @@ class BitgetE2EOrderSession {
             bitget::LoginCredentials{.api_key = "key",
                                      .api_secret = "secret",
                                      .passphrase = "phrase"},
-            *handler_, kOrderCapacity, kOrderCapacity)) {
+            BitgetRunNamespace(), *handler_, kOrderCapacity, kOrderCapacity)) {
     session_->OnConnectionPhase(websocket::ConnectionPhase::kActive);
     std::array<char, 128 + simdjson::SIMDJSON_PADDING> payload{};
     ready_ = session_->Handle(PaddedTextView(kBitgetLoginSuccess, &payload)) ==
@@ -355,8 +359,9 @@ class BitgetE2EOrderSession {
     core::SetOrderSymbol(&request, "BASUSDT");
     std::array<char, bitget::kPlaceOrderRequestBufferSize> buffer;
     for (std::uint64_t sequence = 1; sequence <= 64; ++sequence) {
-      if (bitget::EncodePlaceOrderRequest(request, sequence, buffer).status !=
-          bitget::OrderEncodeStatus::kOk) {
+      if (bitget::EncodePlaceOrderRequest(request, BitgetRunNamespace(),
+                                          sequence, buffer)
+              .status != bitget::OrderEncodeStatus::kOk) {
         return false;
       }
     }

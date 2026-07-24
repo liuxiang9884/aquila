@@ -910,7 +910,8 @@ TEST(BitgetRttProbeCsvTest, WritesConnectionObservationAndRunMetadata) {
   config.sampling.samples_per_session = 2;
   config.feedback.strategy_id = 7;
   ASSERT_TRUE(WriteRunMetadata(metadata_path, config, /*session_count=*/1,
-                               "samples.csv", "connections.csv", &error))
+                               "samples.csv", "connections.csv", "0123456789AB",
+                               &error))
       << error;
 
   EXPECT_NE(ReadTextFile(connections_path)
@@ -924,6 +925,8 @@ TEST(BitgetRttProbeCsvTest, WritesConnectionObservationAndRunMetadata) {
   EXPECT_NE(metadata.find("\"session_count\": 1"), std::string::npos);
   EXPECT_NE(metadata.find("\"feedback_strategy_id\": 7"), std::string::npos);
   EXPECT_NE(metadata.find("\"order_symbol\": \"BTC_USDT\""), std::string::npos);
+  EXPECT_NE(metadata.find("\"client_oid_run_namespace\": \"0123456789AB\""),
+            std::string::npos);
   std::filesystem::remove(connections_path);
   std::filesystem::remove(metadata_path);
 }

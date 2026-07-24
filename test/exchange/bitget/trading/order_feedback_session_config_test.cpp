@@ -18,6 +18,7 @@ name = "bitget_order_feedback_high_availability"
 category = "usdt-futures"
 position_mode = "one_way_mode"
 margin_mode = "crossed"
+client_oid_run_namespace = "0123456789AB"
 
 [order_feedback_session.credentials]
 api_key_env = "BITGET_TEST_KEY"
@@ -66,6 +67,7 @@ TEST(BitgetOrderFeedbackSessionConfigTest, ParsesV1ScopeEndpointAndShm) {
   EXPECT_EQ(result.value.category, "usdt-futures");
   EXPECT_EQ(result.value.position_mode, "one_way_mode");
   EXPECT_EQ(result.value.margin_mode, "crossed");
+  EXPECT_EQ(result.value.client_oid_run_namespace.View(), "0123456789AB");
   EXPECT_EQ(result.value.credentials.api_key_env, "BITGET_TEST_KEY");
   EXPECT_EQ(result.value.credentials.api_secret_env, "BITGET_TEST_SECRET");
   EXPECT_EQ(result.value.credentials.api_passphrase_env,
@@ -96,6 +98,22 @@ TEST(BitgetOrderFeedbackSessionConfigTest, LoadsCheckedInConfig) {
   EXPECT_EQ(result.value.name, "bitget_order_feedback_high_speed_private");
   EXPECT_EQ(result.value.connection.host, "vip-ws-uta-pri-a.bitget.com");
   EXPECT_EQ(result.value.connection.target, "/v3/ws/private");
+  EXPECT_EQ(result.value.client_oid_run_namespace.View(), "000000000000");
+  EXPECT_FALSE(result.value.client_oid_run_namespace.IsConfigured());
+}
+
+TEST(BitgetOrderFeedbackSessionConfigTest,
+     RejectsMissingOrInvalidRunNamespace) {
+  for (const std::string_view replacement : {
+           "",
+           "client_oid_run_namespace = \"0123456789A\"",
+           "client_oid_run_namespace = \"0123456789AI\"",
+           "client_oid_run_namespace = \"0123456789ab\"",
+       }) {
+    std::string text = BaseToml();
+    Replace(&text, "client_oid_run_namespace = \"0123456789AB\"", replacement);
+    EXPECT_FALSE(Parse(text).ok) << replacement;
+  }
 }
 
 TEST(BitgetOrderFeedbackSessionConfigTest, RejectsUnsupportedScope) {

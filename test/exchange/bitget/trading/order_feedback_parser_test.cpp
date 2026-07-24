@@ -18,12 +18,16 @@ namespace {
 
 constexpr std::int64_t kLocalReceiveNs = 1'750'034'397'080'123'456LL;
 constexpr std::uint64_t kLocalOrderId = 72'057'594'037'927'978ULL;
+constexpr std::string_view kRunNamespace = "0123456789AB";
 
 struct OwnedOrderFeedbackDiagnosticRecord {
   std::string client_oid;
   std::string order_id;
   std::string order_status;
   std::string cancel_reason;
+  OrderFeedbackDiagnosticKind kind{
+      OrderFeedbackDiagnosticKind::kProtocolUpdate};
+  ClientOidIgnoreReason ignore_reason{ClientOidIgnoreReason::kNone};
   std::uint64_t exchange_message_time_ms{0};
   std::uint64_t created_time_ms{0};
   std::uint64_t updated_time_ms{0};
@@ -37,6 +41,8 @@ OwnedOrderFeedbackDiagnosticRecord Own(
       .order_id = std::string(record.order_id),
       .order_status = std::string(record.order_status),
       .cancel_reason = std::string(record.cancel_reason),
+      .kind = record.kind,
+      .ignore_reason = record.ignore_reason,
       .exchange_message_time_ms = record.exchange_message_time_ms,
       .created_time_ms = record.created_time_ms,
       .updated_time_ms = record.updated_time_ms,
@@ -56,6 +62,7 @@ ParseOutput Parse(std::string_view payload) {
   simdjson::ondemand::parser parser;
   output.result = ParseBitgetOrderFeedbackMessage(
       payload, /*readable_tail_bytes=*/0, kLocalReceiveNs, parser, output.stats,
+      ClientOidRunNamespace::Parse(kRunNamespace).value(),
       [&output](const OrderFeedbackEvent& event) noexcept {
         output.events.push_back(event);
         return true;
@@ -70,7 +77,7 @@ constexpr std::string_view kAccepted = R"({
   "action":"snapshot",
   "arg":{"instType":"UTA","topic":"order"},
   "data":[{"category":"usdt-futures","orderId":"9988",
-    "clientOid":"a-72057594037927978","qty":"1.5",
+    "clientOid":"a1-0123456789AB-00JPIA9PM8JSA","qty":"1.5",
     "holdMode":"one_way_mode","marginMode":"crossed",
     "cumExecQty":"0","avgPrice":"0","orderStatus":"new",
     "createdTime":"1750034397001",
@@ -85,7 +92,7 @@ std::string OrderPayload(std::string_view status, std::string_view quantity,
           ? std::string{}
           : fmt::format(R"(,"cancelReason":"{}")", cancel_reason);
   return fmt::format(
-      R"({{"action":"snapshot","arg":{{"instType":"UTA","topic":"order"}},"data":[{{"category":"usdt-futures","orderId":"9988","clientOid":"a-72057594037927978","qty":"{}","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"{}","avgPrice":"{}","orderStatus":"{}","updatedTime":"1750034397076"{}}}]}})",
+      R"({{"action":"snapshot","arg":{{"instType":"UTA","topic":"order"}},"data":[{{"category":"usdt-futures","orderId":"9988","clientOid":"a1-0123456789AB-00JPIA9PM8JSA","qty":"{}","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"{}","avgPrice":"{}","orderStatus":"{}","updatedTime":"1750034397076"{}}}]}})",
       quantity, cumulative, average_price, status, cancel_reason_field);
 }
 
@@ -119,7 +126,9 @@ TEST(BitgetOrderFeedbackParserTest, MapsAcceptedAquilaOrder) {
   ASSERT_EQ(output.diagnostic_records.size(), 1U);
   const OwnedOrderFeedbackDiagnosticRecord& diagnostic =
       output.diagnostic_records.front();
-  EXPECT_EQ(diagnostic.client_oid, "a-72057594037927978");
+  EXPECT_EQ(diagnostic.client_oid, "a1-0123456789AB-00JPIA9PM8JSA");
+  EXPECT_EQ(diagnostic.kind, OrderFeedbackDiagnosticKind::kProtocolUpdate);
+  EXPECT_EQ(diagnostic.ignore_reason, ClientOidIgnoreReason::kNone);
   EXPECT_EQ(diagnostic.order_id, "9988");
   EXPECT_EQ(diagnostic.order_status, "new");
   EXPECT_TRUE(diagnostic.cancel_reason.empty());
@@ -221,7 +230,7 @@ TEST(BitgetOrderFeedbackParserTest,
 TEST(BitgetOrderFeedbackParserTest, MalformedAquilaClientOidLosesContinuity) {
   const ParseOutput output = Parse(R"({
     "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
-    "data":[{"clientOid":"a-not-a-number"}]})");
+    "data":[{"clientOid":"a1-0123456789AB-00000000000!1"}]})");
 
   EXPECT_EQ(output.result.status,
             OrderFeedbackParseStatus::kDecodeUnrecoverable);
@@ -234,7 +243,7 @@ TEST(BitgetOrderFeedbackParserTest, AcceptsMaximumUint64ClientOid) {
   const ParseOutput output = Parse(R"({
     "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
     "data":[{"category":"usdt-futures","orderId":"9988",
-      "clientOid":"a-18446744073709551615","qty":"1",
+      "clientOid":"a1-0123456789AB-3W5E11264SGSF","qty":"1",
       "holdMode":"one_way_mode","marginMode":"crossed",
       "cumExecQty":"0","avgPrice":"0","orderStatus":"new",
       "updatedTime":"1750034397076"}]})");
@@ -242,6 +251,29 @@ TEST(BitgetOrderFeedbackParserTest, AcceptsMaximumUint64ClientOid) {
   ASSERT_EQ(output.events.size(), 1U);
   EXPECT_EQ(output.events[0].local_order_id,
             std::numeric_limits<std::uint64_t>::max());
+}
+
+TEST(BitgetOrderFeedbackParserTest,
+     IgnoresForeignRunNamespaceAndLegacyWithoutContinuityLoss) {
+  const ParseOutput output = Parse(R"({
+    "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
+    "data":[
+      {"clientOid":"a1-ZYXWVTSRQPNM-00000000000!1"},
+      {"clientOid":"a-72057594037927978"}]})");
+
+  EXPECT_EQ(output.result.status, OrderFeedbackParseStatus::kOk);
+  EXPECT_FALSE(output.result.continuity_lost);
+  EXPECT_TRUE(output.events.empty());
+  EXPECT_EQ(output.stats.foreign_run_namespace_orders_ignored, 1U);
+  EXPECT_EQ(output.stats.legacy_client_oid_orders_ignored, 1U);
+  EXPECT_EQ(output.stats.validation_errors, 0U);
+  ASSERT_EQ(output.diagnostic_records.size(), 2U);
+  EXPECT_EQ(output.diagnostic_records[0].kind,
+            OrderFeedbackDiagnosticKind::kClientOidIgnored);
+  EXPECT_EQ(output.diagnostic_records[0].ignore_reason,
+            ClientOidIgnoreReason::kForeignRunNamespace);
+  EXPECT_EQ(output.diagnostic_records[1].ignore_reason,
+            ClientOidIgnoreReason::kLegacyClientOid);
 }
 
 TEST(BitgetOrderFeedbackParserTest, MapsLifecycleStatusesAndQuantities) {
@@ -380,12 +412,12 @@ TEST(BitgetOrderFeedbackParserTest, ParsesMixedBatch) {
     "data":[
       {"clientOid":"manual-42"},
       {"category":"usdt-futures","orderId":"9988",
-       "clientOid":"a-72057594037927978","qty":"1.5",
+       "clientOid":"a1-0123456789AB-00JPIA9PM8JSA","qty":"1.5",
        "holdMode":"one_way_mode","marginMode":"crossed",
        "cumExecQty":"0.4","avgPrice":"100.25",
        "orderStatus":"partially_filled","updatedTime":"1750034397076"},
       {"category":"usdt-futures","orderId":"9989",
-       "clientOid":"a-72057594037927979","qty":"1.5",
+       "clientOid":"a1-0123456789AB-00JPIA9PM8JSB","qty":"1.5",
        "holdMode":"one_way_mode","marginMode":"crossed",
        "cumExecQty":"1.5","avgPrice":"100.5",
        "orderStatus":"filled","updatedTime":"1750034397077"}]})");

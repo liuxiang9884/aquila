@@ -16,6 +16,10 @@
 namespace aquila::bitget {
 namespace {
 
+ClientOidRunNamespace TestRunNamespace() {
+  return ClientOidRunNamespace::Parse("0123456789AB").value();
+}
+
 struct FakeRuntime {
   std::vector<core::OrderResponseEvent> responses;
   std::thread::id callback_thread;
@@ -79,7 +83,8 @@ TEST(BitgetOrderSessionRuntimeAdapterTest,
      DispatchesSynchronouslyAndTracksReady) {
   using Adapter =
       OrderSessionRuntimeAdapter<OrderSessionDefaultPlainWebSocketPolicy>;
-  Adapter adapter(MakeConnectionConfig(), MakeCredentials());
+  Adapter adapter(MakeConnectionConfig(), MakeCredentials(),
+                  TestRunNamespace());
   FakeRuntime runtime;
   adapter.BindRuntime(runtime);
 
@@ -173,7 +178,8 @@ TEST(BitgetOrderSessionRuntimeAdapterTest, AdapterIsMoveOnly) {
   static_assert(std::is_move_constructible_v<Adapter>);
   static_assert(std::is_move_assignable_v<Adapter>);
 
-  Adapter adapter(MakeConnectionConfig(), MakeCredentials());
+  Adapter adapter(MakeConnectionConfig(), MakeCredentials(),
+                  TestRunNamespace());
   adapter.MarkLoginReadyForTest();
   Adapter moved(std::move(adapter));
   EXPECT_TRUE(moved.Ready());

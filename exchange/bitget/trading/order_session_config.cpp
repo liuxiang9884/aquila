@@ -21,6 +21,7 @@ struct RawOrderSessionConfig {
   std::string category{"usdt-futures"};
   std::string position_mode{"one_way_mode"};
   std::string margin_mode{"crossed"};
+  ClientOidRunNamespace client_oid_run_namespace;
   std::string target;
   OrderSessionCredentialsConfig credentials;
   config::WebSocketConfig websocket;
@@ -119,6 +120,20 @@ class OrderSessionConfigParser {
     if (!ok_) {
       return;
     }
+    const std::string client_oid_run_namespace =
+        RequiredString(order_session["client_oid_run_namespace"],
+                       "order_session.client_oid_run_namespace");
+    if (!ok_) {
+      return;
+    }
+    const std::optional<ClientOidRunNamespace> parsed_run_namespace =
+        ClientOidRunNamespace::Parse(client_oid_run_namespace);
+    if (!parsed_run_namespace.has_value()) {
+      Fail("order_session.client_oid_run_namespace",
+           " must be 12 uppercase Crockford Base32 characters");
+      return;
+    }
+    raw_.client_oid_run_namespace = *parsed_run_namespace;
     if (raw_.category != "usdt-futures") {
       Fail("order_session.category", " must be usdt-futures");
       return;
@@ -202,6 +217,7 @@ class OrderSessionConfigParser {
     config.category = std::move(raw_.category);
     config.position_mode = std::move(raw_.position_mode);
     config.margin_mode = std::move(raw_.margin_mode);
+    config.client_oid_run_namespace = raw_.client_oid_run_namespace;
     config.connection = std::move(connection_result.value);
     config.credentials = std::move(raw_.credentials);
     config.request_map_capacity = raw_.request_map_capacity;

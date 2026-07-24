@@ -37,6 +37,8 @@ struct OrderFeedbackParserStats {
   std::uint64_t orders_seen{0};
   std::uint64_t events_emitted{0};
   std::uint64_t foreign_orders_ignored{0};
+  std::uint64_t foreign_run_namespace_orders_ignored{0};
+  std::uint64_t legacy_client_oid_orders_ignored{0};
   std::uint64_t unroutable_orders_ignored{0};
   std::uint64_t legacy_canceled_statuses{0};
   std::uint64_t validation_errors{0};
@@ -53,11 +55,25 @@ struct OrderFeedbackParseResult {
   bool continuity_lost{false};
 };
 
+enum class OrderFeedbackDiagnosticKind : std::uint8_t {
+  kProtocolUpdate,
+  kClientOidIgnored,
+};
+
+enum class ClientOidIgnoreReason : std::uint8_t {
+  kNone,
+  kForeignRunNamespace,
+  kLegacyClientOid,
+};
+
 struct OrderFeedbackDiagnosticRecord {
   std::string_view client_oid;
   std::string_view order_id;
   std::string_view order_status;
   std::string_view cancel_reason;
+  OrderFeedbackDiagnosticKind kind{
+      OrderFeedbackDiagnosticKind::kProtocolUpdate};
+  ClientOidIgnoreReason ignore_reason{ClientOidIgnoreReason::kNone};
   std::uint64_t exchange_message_time_ms{0};
   std::uint64_t created_time_ms{0};
   std::uint64_t updated_time_ms{0};
@@ -243,7 +259,8 @@ template <typename EventSink, typename DiagnosticSink>
     simdjson::ondemand::object order, std::int64_t local_receive_ns,
     std::uint64_t exchange_message_time_ms, std::uint32_t batch_data_index,
     OrderFeedbackParserStats& stats, OrderFeedbackParseResult& result,
-    EventSink& event_sink, DiagnosticSink& diagnostic_sink) noexcept {
+    const ClientOidRunNamespace& expected_run_namespace, EventSink& event_sink,
+    DiagnosticSink& diagnostic_sink) noexcept {
   constexpr bool kDiagnosticFieldsEnabled =
       !std::is_same_v<std::remove_cvref_t<DiagnosticSink>,
                       NoopOrderFeedbackDiagnosticSink>;
@@ -271,13 +288,52 @@ template <typename EventSink, typename DiagnosticSink>
     ++stats.unroutable_orders_ignored;
     return OrderRecordParseOutcome::kIgnored;
   }
-  if (!client_oid.starts_with("a-")) {
+  if (client_oid.starts_with("a-")) {
+    ++stats.legacy_client_oid_orders_ignored;
+    if constexpr (kDiagnosticFieldsEnabled) {
+      diagnostic_sink(OrderFeedbackDiagnosticRecord{
+          .client_oid = client_oid,
+          .kind = OrderFeedbackDiagnosticKind::kClientOidIgnored,
+          .ignore_reason = ClientOidIgnoreReason::kLegacyClientOid,
+          .exchange_message_time_ms = exchange_message_time_ms,
+          .batch_data_index = batch_data_index,
+      });
+    }
+    return OrderRecordParseOutcome::kIgnored;
+  }
+  if (!client_oid.starts_with("a1-")) {
     ++stats.foreign_orders_ignored;
     return OrderRecordParseOutcome::kIgnored;
   }
 
+  if (client_oid.size() < 3 + kClientOidRunNamespaceSize) {
+    ++stats.unroutable_orders_ignored;
+    return OrderRecordParseOutcome::kIgnored;
+  }
+  const std::optional<ClientOidRunNamespace> parsed_run_namespace =
+      ClientOidRunNamespace::Parse(
+          client_oid.substr(3, kClientOidRunNamespaceSize));
+  if (!parsed_run_namespace.has_value()) {
+    ++stats.unroutable_orders_ignored;
+    return OrderRecordParseOutcome::kIgnored;
+  }
+  if (*parsed_run_namespace != expected_run_namespace) {
+    ++stats.foreign_run_namespace_orders_ignored;
+    if constexpr (kDiagnosticFieldsEnabled) {
+      diagnostic_sink(OrderFeedbackDiagnosticRecord{
+          .client_oid = client_oid,
+          .kind = OrderFeedbackDiagnosticKind::kClientOidIgnored,
+          .ignore_reason = ClientOidIgnoreReason::kForeignRunNamespace,
+          .exchange_message_time_ms = exchange_message_time_ms,
+          .batch_data_index = batch_data_index,
+      });
+    }
+    return OrderRecordParseOutcome::kIgnored;
+  }
+
   const ParsedClientOid parsed_client_oid = ClientOidCodec::Parse(client_oid);
-  if (!parsed_client_oid.ok) {
+  if (!parsed_client_oid.ok ||
+      parsed_client_oid.run_namespace != expected_run_namespace) {
     ++stats.validation_errors;
     return OrderRecordParseOutcome::kUnrecoverable;
   }
@@ -409,7 +465,8 @@ template <typename EventSink, typename DiagnosticSink>
 [[nodiscard]] inline OrderFeedbackParseResult ParseDocument(
     simdjson::ondemand::document document, std::int64_t local_receive_ns,
     OrderFeedbackParserStats& stats, EventSink& event_sink,
-    DiagnosticSink& diagnostic_sink) noexcept {
+    DiagnosticSink& diagnostic_sink,
+    const ClientOidRunNamespace& expected_run_namespace) noexcept {
   constexpr bool kDiagnosticFieldsEnabled =
       !std::is_same_v<std::remove_cvref_t<DiagnosticSink>,
                       NoopOrderFeedbackDiagnosticSink>;
@@ -496,8 +553,8 @@ template <typename EventSink, typename DiagnosticSink>
     ++stats.orders_seen;
     ++result.orders_seen;
     if (ParseOrderRecord(order, local_receive_ns, exchange_message_time_ms,
-                         batch_data_index, stats, result, event_sink,
-                         diagnostic_sink) ==
+                         batch_data_index, stats, result,
+                         expected_run_namespace, event_sink, diagnostic_sink) ==
         OrderRecordParseOutcome::kUnrecoverable) {
       ++stats.decode_continuity_lost_count;
       result.status = OrderFeedbackParseStatus::kDecodeUnrecoverable;
@@ -560,7 +617,8 @@ template <typename EventSink, typename DiagnosticSink>
 [[nodiscard]] inline OrderFeedbackParseResult ParseBitgetOrderFeedbackMessage(
     std::string_view payload, std::uint32_t readable_tail_bytes,
     std::int64_t local_receive_ns, simdjson::ondemand::parser& parser,
-    OrderFeedbackParserStats& stats, EventSink&& event_sink,
+    OrderFeedbackParserStats& stats,
+    const ClientOidRunNamespace& expected_run_namespace, EventSink&& event_sink,
     DiagnosticSink&& diagnostic_sink) noexcept {
   ++stats.messages_seen;
   if (payload.empty()) {
@@ -581,7 +639,8 @@ template <typename EventSink, typename DiagnosticSink>
     return detail::FinalizeParseResult(
         payload,
         detail::ParseDocument(std::move(document), local_receive_ns, stats,
-                              event_sink, diagnostic_sink),
+                              event_sink, diagnostic_sink,
+                              expected_run_namespace),
         stats);
   }
 
@@ -594,7 +653,8 @@ template <typename EventSink, typename DiagnosticSink>
   return detail::FinalizeParseResult(
       payload,
       detail::ParseDocument(std::move(document), local_receive_ns, stats,
-                            event_sink, diagnostic_sink),
+                            event_sink, diagnostic_sink,
+                            expected_run_namespace),
       stats);
 }
 
@@ -602,11 +662,14 @@ template <typename EventSink>
 [[nodiscard]] inline OrderFeedbackParseResult ParseBitgetOrderFeedbackMessage(
     std::string_view payload, std::uint32_t readable_tail_bytes,
     std::int64_t local_receive_ns, simdjson::ondemand::parser& parser,
-    OrderFeedbackParserStats& stats, EventSink&& event_sink) noexcept {
+    OrderFeedbackParserStats& stats,
+    const ClientOidRunNamespace& expected_run_namespace,
+    EventSink&& event_sink) noexcept {
   detail::NoopOrderFeedbackDiagnosticSink diagnostic_sink;
   return ParseBitgetOrderFeedbackMessage(
       payload, readable_tail_bytes, local_receive_ns, parser, stats,
-      std::forward<EventSink>(event_sink), diagnostic_sink);
+      expected_run_namespace, std::forward<EventSink>(event_sink),
+      diagnostic_sink);
 }
 
 }  // namespace aquila::bitget

@@ -44,6 +44,10 @@ constexpr std::size_t kFeedbackStageCount =
 constexpr std::size_t kFeedbackProfileSegmentCount = kFeedbackStageCount + 1U;
 #endif
 
+bitget::ClientOidRunNamespace BitgetRunNamespace() {
+  return bitget::ClientOidRunNamespace::Parse("0123456789AB").value();
+}
+
 [[nodiscard]] core::OrderPlaceRequest BenchmarkPlaceRequest(
     std::uint64_t local_order_id = 0, std::uint64_t group_id = 0) noexcept {
   core::OrderPlaceRequest request{
@@ -351,11 +355,14 @@ using BenchmarkStrategyContext = core::StrategyContext<BenchmarkOrderSession>;
     std::uint64_t local_order_id,
     std::array<char, 512 + simdjson::SIMDJSON_PADDING>*
         payload_buffer) noexcept {
+  std::array<char, bitget::ClientOidCodec::kEncodedSize> client_oid_buffer{};
+  const std::string_view client_oid = bitget::ClientOidCodec::Format(
+      BitgetRunNamespace(), local_order_id, client_oid_buffer);
   const auto result = fmt::format_to_n(
       payload_buffer->data(),
       payload_buffer->size() - simdjson::SIMDJSON_PADDING,
-      R"({{"action":"snapshot","arg":{{"instType":"UTA","topic":"order"}},"data":[{{"category":"usdt-futures","orderId":"{}","clientOid":"a-{}","qty":"7","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"7","avgPrice":"102.10","orderStatus":"filled","updatedTime":"200"}}]}})",
-      local_order_id + 1000, local_order_id);
+      R"({{"action":"snapshot","arg":{{"instType":"UTA","topic":"order"}},"data":[{{"category":"usdt-futures","orderId":"{}","clientOid":"{}","qty":"7","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"7","avgPrice":"102.10","orderStatus":"filled","updatedTime":"200"}}]}})",
+      local_order_id + 1000, client_oid);
   if (result.size > payload_buffer->size() - simdjson::SIMDJSON_PADDING) {
     return {};
   }
@@ -505,7 +512,7 @@ void BM_LeadLagBitgetFeedbackParserShmToRuntimeTerminalFillLatency(
     const bitget::OrderFeedbackParseResult parsed =
         bitget::ParseBitgetOrderFeedbackMessage(
             payload, simdjson::SIMDJSON_PADDING, kFeedbackLocalReceiveNs,
-            parser, parser_stats,
+            parser, parser_stats, BitgetRunNamespace(),
             [&publisher, &published](const OrderFeedbackEvent& event) noexcept {
               published = publisher.Publish(event);
             });

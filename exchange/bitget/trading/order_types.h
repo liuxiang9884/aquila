@@ -1,9 +1,12 @@
 #ifndef AQUILA_EXCHANGE_BITGET_TRADING_ORDER_TYPES_H_
 #define AQUILA_EXCHANGE_BITGET_TRADING_ORDER_TYPES_H_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "core/common/types.h"
 
@@ -11,6 +14,54 @@ namespace aquila::bitget {
 
 inline constexpr std::size_t kDefaultOrderRequestMapCapacity = 16384;
 inline constexpr std::size_t kDefaultOrderIdCacheCapacity = 16384;
+inline constexpr std::size_t kClientOidRunNamespaceSize = 12;
+inline constexpr std::string_view kClientOidReservedRunNamespace =
+    "000000000000";
+
+class ClientOidRunNamespace {
+ public:
+  [[nodiscard]] static std::optional<ClientOidRunNamespace> Parse(
+      std::string_view text) noexcept {
+    if (text.size() != kClientOidRunNamespaceSize) {
+      return std::nullopt;
+    }
+    for (const char byte : text) {
+      const bool digit = byte >= '0' && byte <= '9';
+      const bool crockford_letter =
+          (byte >= 'A' && byte <= 'H') || (byte >= 'J' && byte <= 'K') ||
+          (byte >= 'M' && byte <= 'N') || (byte >= 'P' && byte <= 'T') ||
+          (byte >= 'V' && byte <= 'Z');
+      if (!digit && !crockford_letter) {
+        return std::nullopt;
+      }
+    }
+    ClientOidRunNamespace result;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+      result.value_[i] = text[i];
+    }
+    result.valid_ = true;
+    return result;
+  }
+
+  [[nodiscard]] std::string_view View() const noexcept {
+    return valid_ ? std::string_view(value_.data(), value_.size())
+                  : std::string_view{};
+  }
+
+  [[nodiscard]] bool IsConfigured() const noexcept {
+    return valid_ && View() != kClientOidReservedRunNamespace;
+  }
+
+  [[nodiscard]] bool valid() const noexcept {
+    return valid_;
+  }
+
+  bool operator==(const ClientOidRunNamespace&) const noexcept = default;
+
+ private:
+  std::array<char, kClientOidRunNamespaceSize> value_{};
+  bool valid_{false};
+};
 
 enum class OrderRequestType : std::uint8_t {
   kUnknown = 0,
@@ -26,6 +77,7 @@ struct DecodedRequestId {
 
 struct ParsedClientOid {
   bool ok{false};
+  ClientOidRunNamespace run_namespace{};
   std::uint64_t local_order_id{0};
 };
 

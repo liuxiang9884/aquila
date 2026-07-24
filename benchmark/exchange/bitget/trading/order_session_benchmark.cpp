@@ -33,7 +33,7 @@ namespace aquila::bitget {
 namespace {
 
 constexpr std::string_view kPlaceAck =
-    R"({"event":"trade","id":"72057594037927945","category":"usdt-futures","topic":"place-order","args":[{"symbol":"BTCUSDT","orderId":"123456789","clientOid":"a-42","cTime":"1750034397008"}],"code":"0","msg":"success","connId":"connection-1","ts":"1750034397076"})";
+    R"({"event":"trade","id":"72057594037927945","category":"usdt-futures","topic":"place-order","args":[{"symbol":"BTCUSDT","orderId":"123456789","clientOid":"a1-0123456789AB-0000000000016","cTime":"1750034397008"}],"code":"0","msg":"success","connId":"connection-1","ts":"1750034397076"})";
 
 constexpr std::string_view kPlaceError =
     R"({"event":"error","id":"72057594037927945","topic":"place-order","code":"40010","msg":"Request timed out","ts":"1750034397076"})";
@@ -42,6 +42,10 @@ constexpr std::string_view kLoginSuccess =
     R"({"event":"login","code":"0","msg":""})";
 
 constexpr std::size_t kOrderSendLatencyIterations = 4096;
+
+ClientOidRunNamespace TestRunNamespace() {
+  return ClientOidRunNamespace::Parse("0123456789AB").value();
+}
 
 struct ShmCleanup {
   explicit ShmCleanup(std::string shm_name_in)
@@ -174,10 +178,13 @@ struct PaddedTextPayload {
 
 [[nodiscard]] PaddedTextPayload MakePlaceAckPayload(
     std::uint64_t request_sequence, std::uint64_t local_order_id) {
+  std::array<char, ClientOidCodec::kEncodedSize> client_oid_buffer{};
+  const std::string_view client_oid = ClientOidCodec::Format(
+      TestRunNamespace(), local_order_id, client_oid_buffer);
   const std::string payload = fmt::format(
-      R"({{"event":"trade","id":"{}","category":"usdt-futures","topic":"place-order","args":[{{"symbol":"BTCUSDT","orderId":"123456789","clientOid":"a-{}","cTime":"1750034397008"}}],"code":"0","msg":"success","connId":"connection-1","ts":"1750034397076"}})",
+      R"({{"event":"trade","id":"{}","category":"usdt-futures","topic":"place-order","args":[{{"symbol":"BTCUSDT","orderId":"123456789","clientOid":"{}","cTime":"1750034397008"}}],"code":"0","msg":"success","connId":"connection-1","ts":"1750034397076"}})",
       RequestIdCodec::Encode(OrderRequestType::kPlaceOrder, request_sequence),
-      local_order_id);
+      client_oid);
   PaddedTextPayload result{
       .storage = std::vector<char>(payload.size() + simdjson::SIMDJSON_PADDING),
       .payload_size = payload.size(),
@@ -295,8 +302,8 @@ void BenchmarkEncodePlace(benchmark::State& state) {
   const core::OrderPlaceRequest request = MakeStrategyOrder(42);
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
   for (auto _ : state) {
-    const EncodedTextRequest encoded =
-        EncodePlaceOrderRequest(request, 72057594037927945ULL, buffer);
+    const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+        request, TestRunNamespace(), 72057594037927945ULL, buffer);
     benchmark::DoNotOptimize(encoded.text.data());
     benchmark::DoNotOptimize(encoded.text.size());
   }
@@ -307,7 +314,7 @@ void BenchmarkEncodeCancel(benchmark::State& state) {
   std::array<char, kCancelOrderRequestBufferSize> buffer{};
   for (auto _ : state) {
     const EncodedTextRequest encoded = EncodeCancelOrderRequest(
-        request, 123456789, 144115188075855881ULL, buffer);
+        request, TestRunNamespace(), 123456789, 144115188075855881ULL, buffer);
     benchmark::DoNotOptimize(encoded.text.data());
     benchmark::DoNotOptimize(encoded.text.size());
   }
@@ -347,7 +354,7 @@ void BenchmarkOrderSessionPlaceOrderToCountingTransport(
       MakeOrderSessionConfig(),
       LoginCredentials{
           .api_key = "key", .api_secret = "secret", .passphrase = "phrase"},
-      handler, kOrderSendLatencyIterations + 2,
+      TestRunNamespace(), handler, kOrderSendLatencyIterations + 2,
       kOrderSendLatencyIterations + 2);
   if (!ActivateLoginOnly(session)) {
     state.SkipWithError("Bitget order session login setup failed");
@@ -384,7 +391,7 @@ void BenchmarkOrderSessionPlaceAckToCountingHandler(benchmark::State& state) {
       MakeOrderSessionConfig(),
       LoginCredentials{
           .api_key = "key", .api_secret = "secret", .passphrase = "phrase"},
-      handler, kOrderSendLatencyIterations + 2,
+      TestRunNamespace(), handler, kOrderSendLatencyIterations + 2,
       kOrderSendLatencyIterations + 2);
   if (!ActivateLoginOnly(session)) {
     state.SkipWithError("Bitget order session login setup failed");
@@ -437,7 +444,7 @@ void BenchmarkStrategyContextPlaceLimitOrderToCountingTransport(
       MakeOrderSessionConfig(),
       LoginCredentials{
           .api_key = "key", .api_secret = "secret", .passphrase = "phrase"},
-      handler, kOrderSendLatencyIterations + 2,
+      TestRunNamespace(), handler, kOrderSendLatencyIterations + 2,
       kOrderSendLatencyIterations + 2);
   if (!ActivateLoginOnly(session)) {
     state.SkipWithError("Bitget order session login setup failed");
@@ -501,7 +508,7 @@ void BenchmarkGatewayWorkerPlaceOrderToCountingTransport(
       MakeOrderSessionConfig(),
       LoginCredentials{
           .api_key = "key", .api_secret = "secret", .passphrase = "phrase"},
-      handler, kOrderSendLatencyIterations + 2,
+      TestRunNamespace(), handler, kOrderSendLatencyIterations + 2,
       kOrderSendLatencyIterations + 2);
   if (!ActivateLoginOnly(session)) {
     state.SkipWithError("Bitget order session login setup failed");

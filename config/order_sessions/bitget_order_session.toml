@@ -12,6 +12,8 @@ name = "bitget_order_session_high_speed_private"
 category = "usdt-futures"
 position_mode = "one_way_mode"
 margin_mode = "crossed"
+# Reserved template value. Fresh-run prepare must replace it before orders.
+client_oid_run_namespace = "000000000000"
 request_map_capacity = 16384
 order_id_cache_capacity = 16384
 
