@@ -2,11 +2,10 @@
 #define AQUILA_EXCHANGE_BITGET_TRADING_ORDER_CODECS_H_
 
 #include <array>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
-#include <system_error>
 
 #include "exchange/bitget/trading/order_types.h"
 
@@ -40,6 +39,34 @@ class RequestIdCodec {
 class ClientOidCodec {
  public:
   static constexpr std::size_t kEncodedSize = 29;
+  static constexpr std::size_t kLocalOrderIdEncodedSize = 13;
+
+  [[nodiscard]] static bool ParseLocalOrderId(std::string_view text,
+                                              std::uint64_t* output) noexcept {
+    if (text.size() != kLocalOrderIdEncodedSize || output == nullptr) {
+      return false;
+    }
+    std::uint64_t value = 0;
+    for (const char byte : text) {
+      std::uint64_t digit = 0;
+      if (byte >= '0' && byte <= '9') {
+        digit = static_cast<std::uint64_t>(byte - '0');
+      } else if (byte >= 'A' && byte <= 'Z') {
+        digit = static_cast<std::uint64_t>(byte - 'A' + 10);
+      } else {
+        return false;
+      }
+      if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 36) {
+        return false;
+      }
+      value = value * 36 + digit;
+    }
+    if (value == 0) {
+      return false;
+    }
+    *output = value;
+    return true;
+  }
 
   template <std::size_t N>
   [[nodiscard]] static std::string_view Format(
@@ -82,19 +109,8 @@ class ClientOidCodec {
     if (!run_namespace.has_value()) {
       return {};
     }
-    const std::string_view local_order_id_text = text.substr(16);
-    for (const char byte : local_order_id_text) {
-      const bool digit = byte >= '0' && byte <= '9';
-      const bool uppercase_letter = byte >= 'A' && byte <= 'Z';
-      if (!digit && !uppercase_letter) {
-        return {};
-      }
-    }
     std::uint64_t local_order_id = 0;
-    const char* const first = local_order_id_text.data();
-    const char* const last = first + local_order_id_text.size();
-    const auto result = std::from_chars(first, last, local_order_id, 36);
-    if (result.ec != std::errc{} || result.ptr != last || local_order_id == 0) {
+    if (!ParseLocalOrderId(text.substr(16), &local_order_id)) {
       return {};
     }
     return {.ok = true,

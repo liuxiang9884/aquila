@@ -310,14 +310,13 @@ template <typename EventSink, typename DiagnosticSink>
     ++stats.unroutable_orders_ignored;
     return OrderRecordParseOutcome::kIgnored;
   }
-  const std::optional<ClientOidRunNamespace> parsed_run_namespace =
-      ClientOidRunNamespace::Parse(
-          client_oid.substr(3, kClientOidRunNamespaceSize));
-  if (!parsed_run_namespace.has_value()) {
-    ++stats.unroutable_orders_ignored;
-    return OrderRecordParseOutcome::kIgnored;
-  }
-  if (*parsed_run_namespace != expected_run_namespace) {
+  const std::string_view run_namespace_text =
+      client_oid.substr(3, kClientOidRunNamespaceSize);
+  if (run_namespace_text != expected_run_namespace.View()) {
+    if (!ClientOidRunNamespace::Parse(run_namespace_text).has_value()) {
+      ++stats.unroutable_orders_ignored;
+      return OrderRecordParseOutcome::kIgnored;
+    }
     ++stats.foreign_run_namespace_orders_ignored;
     if constexpr (kDiagnosticFieldsEnabled) {
       diagnostic_sink(OrderFeedbackDiagnosticRecord{
@@ -331,9 +330,11 @@ template <typename EventSink, typename DiagnosticSink>
     return OrderRecordParseOutcome::kIgnored;
   }
 
-  const ParsedClientOid parsed_client_oid = ClientOidCodec::Parse(client_oid);
-  if (!parsed_client_oid.ok ||
-      parsed_client_oid.run_namespace != expected_run_namespace) {
+  std::uint64_t local_order_id = 0;
+  if (client_oid.size() != ClientOidCodec::kEncodedSize ||
+      client_oid[15] != '-' ||
+      !ClientOidCodec::ParseLocalOrderId(client_oid.substr(16),
+                                         &local_order_id)) {
     ++stats.validation_errors;
     return OrderRecordParseOutcome::kUnrecoverable;
   }
@@ -400,7 +401,7 @@ template <typename EventSink, typename DiagnosticSink>
   const double left_quantity =
       std::max(0.0, quantity - cumulative_filled_quantity);
   OrderFeedbackEvent event{};
-  event.local_order_id = parsed_client_oid.local_order_id;
+  event.local_order_id = local_order_id;
   event.exchange_order_id = exchange_order_id;
   event.cumulative_filled_quantity = cumulative_filled_quantity;
   event.left_quantity = left_quantity;
