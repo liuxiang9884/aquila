@@ -47,7 +47,7 @@ struct LoadedContext {
 struct OrderRecord {
   std::string role;
   std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   smoke::WireOrder wire;
   bool present{false};
 };
@@ -215,7 +215,7 @@ void DrainBbo(market_data::BookTickerShmReader& reader,
     const OrderRecord& record) {
   core::OrderPlaceRequest request{
       .local_order_id = record.local_order_id,
-      .parent_id = record.parent_id,
+      .group_id = record.group_id,
       .price = record.wire.price,
       .quantity = record.wire.quantity,
       .symbol_id = config.symbol_id,
@@ -260,7 +260,7 @@ struct GatewayRuntime {
         .event_kind = "gateway_response",
         .order_role = record == nullptr ? "unknown" : record->role,
         .local_order_id = event.local_order_id,
-        .parent_id = event.parent_id,
+        .group_id = event.group_id,
         .route_id = event.route_id,
         .response_kind = EnumText(event.kind),
         .exchange_order_id = event.exchange_order_id,
@@ -288,7 +288,7 @@ void ApplyFeedback(const aquila::OrderFeedbackEvent& event,
       .event_kind = terminal ? "feedback_terminal" : "feedback_update",
       .order_role = record == nullptr ? "unknown" : record->role,
       .local_order_id = event.local_order_id,
-      .parent_id = record == nullptr ? 0 : record->parent_id,
+      .group_id = record == nullptr ? 0 : record->group_id,
       .route_id = config.route_id,
       .feedback_kind = EnumText(event.kind),
       .exchange_order_id = event.exchange_order_id,
@@ -314,7 +314,7 @@ void WriteSendEvent(smoke::EvidenceWriter* writer,
       .event_kind = "order_submitted",
       .order_role = record.role,
       .local_order_id = record.local_order_id,
-      .parent_id = record.parent_id,
+      .group_id = record.group_id,
       .route_id = config.route_id,
       .response_kind = EnumText(send.status),
       .local_ns = send.send_local_ns,
@@ -460,7 +460,7 @@ void WriteSendEvent(smoke::EvidenceWriter* writer,
       .role = "entry",
       .local_order_id =
           aquila::LocalOrderIdCodec::Encode(config.strategy_id, 1),
-      .parent_id = numeric_run_id,
+      .group_id = numeric_run_id,
       .wire = entry_wire_result.value,
       .present = true,
   };
@@ -517,7 +517,7 @@ void WriteSendEvent(smoke::EvidenceWriter* writer,
           .role = "close",
           .local_order_id =
               aquila::LocalOrderIdCodec::Encode(config.strategy_id, 2),
-          .parent_id = numeric_run_id,
+          .group_id = numeric_run_id,
           .wire = close_wire_result.value,
           .present = true,
       };

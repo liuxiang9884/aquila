@@ -226,8 +226,6 @@ class OrderGatewayClient {
     command.command_seq = NextCommandSeq();
     command.owner_enqueue_ns = NowNs();
     command.payload.place = request;
-    command.payload.place.parent_id =
-        request.parent_id == 0 ? request.local_order_id : request.parent_id;
     command.payload.place.gateway_route_id = route;
     return EnqueueOrderCommand(command, route, request.local_order_id, true);
   }
@@ -254,8 +252,6 @@ class OrderGatewayClient {
     command.command_seq = NextCommandSeq();
     command.owner_enqueue_ns = NowNs();
     command.payload.cancel = request;
-    command.payload.cancel.parent_id =
-        request.parent_id == 0 ? request.local_order_id : request.parent_id;
     command.payload.cancel.gateway_route_id = route;
     return EnqueueOrderCommand(command, route, request.local_order_id, false);
   }
@@ -597,7 +593,7 @@ class OrderGatewayClient {
     return OrderResponseEvent{
         .kind = kind,
         .local_order_id = event.local_order_id,
-        .parent_id = event.parent_id,
+        .group_id = event.group_id,
         .exchange_order_id = event.exchange_order_id,
         .route_id = event.route_id,
         .local_receive_ns = event.local_receive_ns != 0

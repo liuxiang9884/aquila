@@ -97,7 +97,7 @@ using Runtime = core::TradingRuntime<Strategy, BenchmarkOrderSession,
   return config;
 }
 
-[[nodiscard]] Config BenchmarkConfig() {
+[[nodiscard]] Config BenchmarkConfig(std::uint32_t parallel) {
   Config config;
   config.name = "lead_lag";
   config.version = "1.0";
@@ -133,7 +133,7 @@ using Runtime = core::TradingRuntime<Strategy, BenchmarkOrderSession,
               .open_notional = 1000.0,
               .trailing_stop = 0.05,
               .max_entry_spread = 0.02,
-              .parallel = 1,
+              .parallel = parallel,
           },
       .bbo_record =
           BboRecordConfig{
@@ -188,6 +188,7 @@ using Runtime = core::TradingRuntime<Strategy, BenchmarkOrderSession,
 
 void BM_LeadLagRuntimeOpenSignalSubmitPathLatency(benchmark::State& state) {
   benchmarking::EnsureLoggingStarted();
+  const std::uint32_t parallel = static_cast<std::uint32_t>(state.range(0));
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(kLatencyIterations);
 
@@ -197,7 +198,7 @@ void BM_LeadLagRuntimeOpenSignalSubmitPathLatency(benchmark::State& state) {
     auto runtime_result = Runtime::CreateForTest(
         RuntimeConfig(),
         [&session_state] { return BenchmarkOrderSession{&session_state}; },
-        BenchmarkConfig());
+        BenchmarkConfig(parallel));
     if (!runtime_result.ok) {
       state.ResumeTiming();
       state.SkipWithError(runtime_result.error.c_str());
@@ -237,6 +238,12 @@ void BM_LeadLagRuntimeOpenSignalSubmitPathLatency(benchmark::State& state) {
 }
 
 BENCHMARK(BM_LeadLagRuntimeOpenSignalSubmitPathLatency)
+    ->ArgName("parallel")
+    ->Arg(1)
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);

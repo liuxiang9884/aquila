@@ -19,18 +19,22 @@ namespace {
 constexpr std::int64_t kLocalReceiveNs = 1'750'034'397'080'123'456LL;
 constexpr std::size_t kPercentileSampleCount = 20'000;
 
+ClientOidRunNamespace TestRunNamespace() {
+  return ClientOidRunNamespace::Parse("0123456789AB").value();
+}
+
 constexpr std::string_view kAccepted =
-    R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"category":"usdt-futures","orderId":"9988","clientOid":"a-72057594037927978","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"0","avgPrice":"0","orderStatus":"new","updatedTime":"1750034397076"}]})";
+    R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"category":"usdt-futures","orderId":"9988","clientOid":"a1-0123456789AB-00JPIA9PM8JSA","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"0","avgPrice":"0","orderStatus":"new","updatedTime":"1750034397076"}]})";
 constexpr std::string_view kPartialFilled =
-    R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"category":"usdt-futures","orderId":"9988","clientOid":"a-72057594037927978","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"0.4","avgPrice":"100.25","orderStatus":"partially_filled","updatedTime":"1750034397076"}]})";
+    R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"category":"usdt-futures","orderId":"9988","clientOid":"a1-0123456789AB-00JPIA9PM8JSA","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"0.4","avgPrice":"100.25","orderStatus":"partially_filled","updatedTime":"1750034397076"}]})";
 constexpr std::string_view kTerminal =
-    R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"category":"usdt-futures","orderId":"9988","clientOid":"a-72057594037927978","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"1.5","avgPrice":"100.25","orderStatus":"filled","updatedTime":"1750034397076"}]})";
+    R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"category":"usdt-futures","orderId":"9988","clientOid":"a1-0123456789AB-00JPIA9PM8JSA","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"1.5","avgPrice":"100.25","orderStatus":"filled","updatedTime":"1750034397076"}]})";
 constexpr std::string_view kForeign =
     R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"clientOid":"manual-42"}]})";
 constexpr std::string_view kMalformedAquila =
-    R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"clientOid":"a-42"}]})";
+    R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"clientOid":"a1-0123456789AB-00000000000!1"}]})";
 constexpr std::string_view kTypicalBatch =
-    R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"category":"usdt-futures","orderId":"9988","clientOid":"a-72057594037927978","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"0","avgPrice":"0","orderStatus":"new","updatedTime":"1750034397076"},{"category":"usdt-futures","orderId":"9989","clientOid":"a-72057594037927979","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"0.4","avgPrice":"100.25","orderStatus":"partially_filled","updatedTime":"1750034397077"},{"category":"usdt-futures","orderId":"9990","clientOid":"a-72057594037927980","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"1.5","avgPrice":"100.5","orderStatus":"filled","updatedTime":"1750034397078"}]})";
+    R"({"action":"snapshot","arg":{"instType":"UTA","topic":"order"},"data":[{"category":"usdt-futures","orderId":"9988","clientOid":"a1-0123456789AB-00JPIA9PM8JSA","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"0","avgPrice":"0","orderStatus":"new","updatedTime":"1750034397076"},{"category":"usdt-futures","orderId":"9989","clientOid":"a1-0123456789AB-00JPIA9PM8JSB","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"0.4","avgPrice":"100.25","orderStatus":"partially_filled","updatedTime":"1750034397077"},{"category":"usdt-futures","orderId":"9990","clientOid":"a1-0123456789AB-00JPIA9PM8JSC","qty":"1.5","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"1.5","avgPrice":"100.5","orderStatus":"filled","updatedTime":"1750034397078"}]})";
 
 template <typename Operation>
 void RecordPercentiles(benchmark::State& state, Operation&& operation) {
@@ -66,6 +70,7 @@ void RunParserBenchmark(benchmark::State& state, std::string_view payload) {
     OrderFeedbackParserStats stats{};
     const OrderFeedbackParseResult result = ParseBitgetOrderFeedbackMessage(
         view, simdjson::SIMDJSON_PADDING, kLocalReceiveNs, parser, stats,
+        TestRunNamespace(),
         [&event](const OrderFeedbackEvent& parsed) noexcept {
           event = parsed;
           return true;
@@ -95,6 +100,7 @@ void BenchmarkAcceptedWithDiagnosticFields(benchmark::State& state) {
     OrderFeedbackParserStats stats{};
     const OrderFeedbackParseResult result = ParseBitgetOrderFeedbackMessage(
         view, simdjson::SIMDJSON_PADDING, kLocalReceiveNs, parser, stats,
+        TestRunNamespace(),
         [&event](const OrderFeedbackEvent& parsed) noexcept {
           event = parsed;
           return true;
@@ -124,7 +130,8 @@ void BenchmarkSessionClassificationThenAccepted(benchmark::State& state) {
     OrderFeedbackParserStats stats{};
     OrderFeedbackParseResult result = ParseBitgetOrderFeedbackMessage(
         view, simdjson::SIMDJSON_PADDING, kLocalReceiveNs, feedback_parser,
-        stats, [&event](const OrderFeedbackEvent& parsed) noexcept {
+        stats, TestRunNamespace(),
+        [&event](const OrderFeedbackEvent& parsed) noexcept {
           event = parsed;
           return true;
         });
@@ -179,6 +186,7 @@ void BenchmarkParserToShmPublisherAndDrain(benchmark::State& state) {
     OrderFeedbackParserStats stats{};
     const OrderFeedbackParseResult result = ParseBitgetOrderFeedbackMessage(
         view, simdjson::SIMDJSON_PADDING, kLocalReceiveNs, parser, stats,
+        TestRunNamespace(),
         [&publisher](const OrderFeedbackEvent& event) noexcept {
           return publisher.Publish(event);
         });

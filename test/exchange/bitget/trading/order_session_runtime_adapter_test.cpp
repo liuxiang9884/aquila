@@ -16,6 +16,10 @@
 namespace aquila::bitget {
 namespace {
 
+ClientOidRunNamespace TestRunNamespace() {
+  return ClientOidRunNamespace::Parse("0123456789AB").value();
+}
+
 struct FakeRuntime {
   std::vector<core::OrderResponseEvent> responses;
   std::thread::id callback_thread;
@@ -57,7 +61,7 @@ TEST(BitgetOrderSessionRuntimeAdapterTest, PreservesCoreEventFields) {
       .kind = OrderResponseKind::kAck,
       .request_type = OrderRequestType::kPlaceOrder,
       .local_order_id = 0x0400000000000007ULL,
-      .parent_id = 88,
+      .group_id = 77,
       .exchange_order_id = 9988,
       .route_id = 3,
       .local_receive_ns = 123456789,
@@ -68,7 +72,7 @@ TEST(BitgetOrderSessionRuntimeAdapterTest, PreservesCoreEventFields) {
 
   EXPECT_EQ(event.kind, core::OrderResponseKind::kAck);
   EXPECT_EQ(event.local_order_id, response.local_order_id);
-  EXPECT_EQ(event.parent_id, response.parent_id);
+  EXPECT_EQ(event.group_id, response.group_id);
   EXPECT_EQ(event.exchange_order_id, response.exchange_order_id);
   EXPECT_EQ(event.route_id, response.route_id);
   EXPECT_EQ(event.local_receive_ns, response.local_receive_ns);
@@ -79,7 +83,8 @@ TEST(BitgetOrderSessionRuntimeAdapterTest,
      DispatchesSynchronouslyAndTracksReady) {
   using Adapter =
       OrderSessionRuntimeAdapter<OrderSessionDefaultPlainWebSocketPolicy>;
-  Adapter adapter(MakeConnectionConfig(), MakeCredentials());
+  Adapter adapter(MakeConnectionConfig(), MakeCredentials(),
+                  TestRunNamespace());
   FakeRuntime runtime;
   adapter.BindRuntime(runtime);
 
@@ -173,7 +178,8 @@ TEST(BitgetOrderSessionRuntimeAdapterTest, AdapterIsMoveOnly) {
   static_assert(std::is_move_constructible_v<Adapter>);
   static_assert(std::is_move_assignable_v<Adapter>);
 
-  Adapter adapter(MakeConnectionConfig(), MakeCredentials());
+  Adapter adapter(MakeConnectionConfig(), MakeCredentials(),
+                  TestRunNamespace());
   adapter.MarkLoginReadyForTest();
   Adapter moved(std::move(adapter));
   EXPECT_TRUE(moved.Ready());

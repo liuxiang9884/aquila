@@ -164,9 +164,14 @@ class PrepareGatewaySmokeRunTest(unittest.TestCase):
         order_session = tomllib.loads(
             order_session_path.read_text(encoding="utf-8")
         )
+        self.assertEqual(order_session_path, result.order_session_config)
         self.assertEqual(
             order_session["order_session"]["websocket"]["endpoint"]["host"],
             "vip-ws-uta-pri-a.bitget.com",
+        )
+        self.assertEqual(
+            order_session["order_session"]["client_oid_run_namespace"],
+            result.client_oid_run_namespace,
         )
         self.assertEqual(
             feedback["order_feedback_session"]["shm"]["shm_name"],
@@ -176,11 +181,61 @@ class PrepareGatewaySmokeRunTest(unittest.TestCase):
             feedback["order_feedback_session"]["websocket"]["endpoint"]["host"],
             "vip-ws-uta-pri-a.bitget.com",
         )
+        self.assertEqual(
+            feedback["order_feedback_session"]["client_oid_run_namespace"],
+            result.client_oid_run_namespace,
+        )
         self.assertEqual(smoke["gateway_smoke"]["run_id"], self.run_id)
         self.assertEqual(smoke["market_data"]["shm_name"], result.market_data_shm)
         self.assertEqual(smoke["order_gateway"]["shm_name"], result.gateway_shm)
         self.assertEqual(smoke["feedback"]["shm_name"], result.feedback_shm)
         self.assertEqual(smoke["output"]["run_dir"], str(self.run_dir))
+        manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["client_oid_schema"], "a1")
+        self.assertEqual(
+            manifest["client_oid_run_namespace"],
+            result.client_oid_run_namespace,
+        )
+        self.assertEqual(len(result.client_oid_run_namespace), 12)
+        self.assertNotEqual(result.client_oid_run_namespace, "000000000000")
+
+    def test_independent_fresh_prepares_use_distinct_client_oid_namespaces(self):
+        first = self.prepare()
+        second_run_id = "gateway_smoke_test_second"
+        second = prepare.prepare_runtime_configs(
+            run_id=second_run_id,
+            data_session_source=self.data_source,
+            gateway_source=self.gateway_source,
+            feedback_source=self.feedback_source,
+            smoke_source=self.smoke_source,
+            output_dir=prepare.expected_config_dir(second_run_id),
+        )
+
+        self.assertNotEqual(
+            first.client_oid_run_namespace,
+            second.client_oid_run_namespace,
+        )
+
+    def test_validate_rejects_feedback_namespace_mismatch(self):
+        result = self.prepare()
+        result.feedback_config.write_text(
+            result.feedback_config.read_text(encoding="utf-8").replace(
+                result.client_oid_run_namespace, "ZYXWVTSRQPNM"
+            ),
+            encoding="utf-8",
+        )
+        manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
+        manifest["configs"]["feedback_config"]["sha256"] = prepare.sha256_file(
+            result.feedback_config
+        )
+        prepare.atomic_write_json(result.manifest, manifest)
+
+        with self.assertRaisesRegex(
+            ValueError, "client_oid_run_namespace mismatch"
+        ):
+            prepare.validate_manifest(
+                result.manifest, require_applied=False
+            )
 
     def test_prepare_rejects_existing_fresh_run_output(self):
         self.prepare()

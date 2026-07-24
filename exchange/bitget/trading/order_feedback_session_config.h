@@ -9,6 +9,7 @@
 #include "core/common/result.h"
 #include "core/config/order_feedback_shm_config.h"
 #include "core/websocket/types.h"
+#include "exchange/bitget/trading/order_types.h"
 
 namespace aquila::bitget {
 
@@ -23,6 +24,7 @@ struct OrderFeedbackSessionConfig {
   std::string category{"usdt-futures"};
   std::string position_mode{"one_way_mode"};
   std::string margin_mode{"crossed"};
+  ClientOidRunNamespace client_oid_run_namespace;
   websocket::ConnectionConfig connection;
   OrderFeedbackSessionCredentialsConfig credentials;
   config::OrderFeedbackShmRuntimeConfig shm;

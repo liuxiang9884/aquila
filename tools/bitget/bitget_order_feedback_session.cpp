@@ -41,6 +41,7 @@ void PrintConfig(const aq_bitget::OrderFeedbackSessionConfig& config,
       "bitget_order_feedback_session_config name={} host={} port={} "
       "target={} tls={} category={} position_mode={} margin_mode={} "
       "api_key_env={} api_secret_env={} api_passphrase_env={} shm_name={} "
+      "client_oid_run_namespace={} "
       "channel_name={} max_strategy_count={} queue_capacity={} create={} "
       "remove_existing={} connect={} duration_s={}",
       config.name, config.connection.host, config.connection.port,
@@ -48,8 +49,9 @@ void PrintConfig(const aq_bitget::OrderFeedbackSessionConfig& config,
       config.category, config.position_mode, config.margin_mode,
       config.credentials.api_key_env, config.credentials.api_secret_env,
       config.credentials.api_passphrase_env, config.shm.shm_name,
-      config.shm.channel_name, config.shm.max_strategy_count,
-      config.shm.queue_capacity, config.shm.create ? "true" : "false",
+      config.client_oid_run_namespace.View(), config.shm.channel_name,
+      config.shm.max_strategy_count, config.shm.queue_capacity,
+      config.shm.create ? "true" : "false",
       config.shm.remove_existing ? "true" : "false", connect ? "true" : "false",
       duration_seconds);
 }
@@ -91,7 +93,7 @@ int RunLoginSubscribeOnly(aq_bitget::OrderFeedbackSessionConfig config,
       aq::OrderFeedbackShmPublisher, WebSocketPolicy,
       aq_bitget::OrderFeedbackSessionDiagnostics>;
   Session session(std::move(config.connection), std::move(credentials),
-                  publisher);
+                  config.client_oid_run_namespace, publisher);
 
   std::mutex stop_mutex;
   std::condition_variable stop_condition;
@@ -136,6 +138,8 @@ int RunLoginSubscribeOnly(aq_bitget::OrderFeedbackSessionConfig config,
       "pongs_received={} "
       "heartbeat_timeouts={} order_envelopes={} orders_seen={} "
       "events_published={} foreign_orders_ignored={} "
+      "foreign_run_namespace_orders_ignored={} "
+      "legacy_client_oid_orders_ignored={} "
       "unroutable_orders_ignored={} validation_errors={} "
       "decode_continuity_lost_events={} "
       "disconnect_continuity_lost_events={} publish_failures={} "
@@ -154,6 +158,8 @@ int RunLoginSubscribeOnly(aq_bitget::OrderFeedbackSessionConfig config,
       stats.pongs_received, stats.heartbeat_timeouts,
       parser_stats.order_envelopes, parser_stats.orders_seen,
       stats.events_published, parser_stats.foreign_orders_ignored,
+      parser_stats.foreign_run_namespace_orders_ignored,
+      parser_stats.legacy_client_oid_orders_ignored,
       parser_stats.unroutable_orders_ignored, parser_stats.validation_errors,
       stats.decode_continuity_lost_events,
       stats.disconnect_continuity_lost_events, stats.publish_failures,
@@ -189,6 +195,12 @@ int main(int argc, char** argv) {
   PrintConfig(config_result.value, connect, duration_seconds);
   if (!connect) {
     return 0;
+  }
+  if (!config_result.value.client_oid_run_namespace.IsConfigured()) {
+    NOVA_ERROR(
+        "config_error=reserved client_oid_run_namespace; fresh-run prepare "
+        "must generate a run-scoped feedback config");
+    return 1;
   }
 
   aq_bitget::LoginCredentials credentials;

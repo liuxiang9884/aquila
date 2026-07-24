@@ -282,9 +282,12 @@ class OrderFeedbackSession {
       WebSocketPolicy::kClockSource;
 
   OrderFeedbackSession(websocket::ConnectionConfig config,
-                       LoginCredentials credentials, Publisher& publisher)
+                       LoginCredentials credentials,
+                       ClientOidRunNamespace client_oid_run_namespace,
+                       Publisher& publisher)
       : connection_(ApplyOptions(std::move(config))),
         credentials_(std::move(credentials)),
+        client_oid_run_namespace_(client_oid_run_namespace),
         publisher_(publisher),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(connection_, message_handler_),
@@ -493,13 +496,17 @@ class OrderFeedbackSession {
 
     const OrderFeedbackParseResult parsed = ParseBitgetOrderFeedbackMessage(
         payload, view.readable_tail_bytes, local_receive_ns, feedback_parser_,
-        parser_stats_,
+        parser_stats_, client_oid_run_namespace_,
         [this](const OrderFeedbackEvent& event) noexcept {
           return PublishEvent(event);
         },
         [this, local_receive_ns, local_receive_monotonic_ns,
          local_message_sequence](
             const OrderFeedbackDiagnosticRecord& record) noexcept {
+          if (record.kind == OrderFeedbackDiagnosticKind::kClientOidIgnored) {
+            LogClientOidIgnored(record, local_message_sequence);
+            return;
+          }
           LogOrderProtocolUpdate(record, local_receive_ns,
                                  local_receive_monotonic_ns,
                                  local_message_sequence);
@@ -985,6 +992,20 @@ class OrderFeedbackSession {
     }
   }
 
+  void LogClientOidIgnored(
+      const OrderFeedbackDiagnosticRecord& record,
+      std::uint64_t local_message_sequence) const noexcept {
+    if (::nova::kLogManager.logger() != nullptr) {
+      NOVA_WARNING(
+          "bitget_order_feedback_client_oid_ignored reason={} client_oid={} "
+          "connection_generation={} local_message_sequence={} "
+          "batch_data_index={} exchange_message_time_ms={}",
+          magic_enum::enum_name(record.ignore_reason), record.client_oid,
+          connection_generation_, local_message_sequence,
+          record.batch_data_index, record.exchange_message_time_ms);
+    }
+  }
+
   void LogFastFillUpdate(const FastFillRecord& record,
                          std::int64_t local_receive_realtime_ns,
                          std::uint64_t local_receive_monotonic_ns,
@@ -1049,6 +1070,7 @@ class OrderFeedbackSession {
 
   websocket::ConnectionConfig connection_;
   LoginCredentials credentials_;
+  ClientOidRunNamespace client_oid_run_namespace_;
   Publisher& publisher_;
   MessageHandler message_handler_;
   Client client_;

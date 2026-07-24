@@ -93,6 +93,7 @@ def write_runtime_fixture_graph(
             category = "usdt-futures"
             position_mode = "one_way_mode"
             margin_mode = "crossed"
+            client_oid_run_namespace = "000000000000"
 
             [order_session.credentials]
             api_key_env = "BITGET_TEST_KEY"
@@ -143,6 +144,7 @@ def write_runtime_fixture_graph(
         category = "usdt-futures"
         position_mode = "one_way_mode"
         margin_mode = "crossed"
+        client_oid_run_namespace = "000000000000"
 
         [order_feedback_session.credentials]
         api_key_env = "BITGET_TEST_KEY"
@@ -232,6 +234,13 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
             proc_root=self.proc_root,
         )
 
+    def refresh_config_digest(self, result, key, path):
+        manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
+        manifest["configs"][key]["sha256"] = prepare.sha256_file(path)
+        result.manifest.write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+
     def test_prepare_generates_run_specific_gateway_and_feedback_shm(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
 
@@ -264,6 +273,134 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
         )
         manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
         self.assertFalse(manifest["external_configs_applied"])
+        self.assertEqual(manifest["client_oid_schema"], "a1")
+        self.assertEqual(
+            manifest["client_oid_run_namespace"],
+            result.client_oid_run_namespace,
+        )
+        expected_configs = {
+            "strategy_config": result.strategy_config,
+            "gateway_config": result.gateway_config,
+            "feedback_config": result.feedback_config,
+            **{
+                f"order_session_config_{index}": path
+                for index, path in enumerate(result.order_session_configs)
+            },
+        }
+        self.assertEqual(set(manifest["configs"]), set(expected_configs))
+        for key, path in expected_configs.items():
+            self.assertEqual(manifest["configs"][key]["path"], str(path))
+            self.assertEqual(
+                manifest["configs"][key]["sha256"],
+                prepare.sha256_file(path),
+            )
+        self.assertEqual(len(result.client_oid_run_namespace), 12)
+        self.assertNotEqual(result.client_oid_run_namespace, "000000000000")
+        gateway_data = tomllib.loads(
+            result.gateway_config.read_text(encoding="utf-8")
+        )
+        gateway_session_paths = [
+            Path(route["order_session_config"])
+            for route in gateway_data["order_gateway"]["routes"]
+        ]
+        self.assertEqual(
+            gateway_session_paths, list(result.order_session_configs)
+        )
+        for path in result.order_session_configs:
+            session = tomllib.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                session["order_session"]["client_oid_run_namespace"],
+                result.client_oid_run_namespace,
+            )
+        feedback_data = tomllib.loads(
+            result.feedback_config.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            feedback_data["order_feedback_session"][
+                "client_oid_run_namespace"
+            ],
+            result.client_oid_run_namespace,
+        )
+
+    def test_independent_fresh_prepares_use_distinct_client_oid_namespaces(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
+        first = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+        with TemporaryDirectory(dir="/home/liuxiang/tmp") as second_root_text:
+            second_root = Path(second_root_text)
+            second = prepare.prepare_runtime_configs(
+                run_id=second_root.name,
+                strategy_source=strategy,
+                gateway_source=gateway,
+                feedback_source=feedback,
+                output_dir=second_root / "configs",
+            )
+            self.assertNotEqual(
+                first.client_oid_run_namespace,
+                second.client_oid_run_namespace,
+            )
+
+    def test_validate_rejects_gateway_namespace_mismatch(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+        path = result.order_session_configs[0]
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                result.client_oid_run_namespace, "ZYXWVTSRQPNM"
+            ),
+            encoding="utf-8",
+        )
+        manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
+        manifest["configs"]["order_session_config_0"]["sha256"] = (
+            prepare.sha256_file(path)
+        )
+        result.manifest.write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "client_oid_run_namespace mismatch"
+        ):
+            prepare._validate_manifest(
+                result.manifest,
+                strategy_command=None,
+                require_applied=False,
+            )
+
+    def test_validate_rejects_config_digest_mismatch(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+        result.order_session_configs[0].write_text(
+            result.order_session_configs[0].read_text(encoding="utf-8")
+            + "\n# tampered\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "configs.order_session_config_0 digest mismatch"
+        ):
+            prepare._validate_manifest(
+                result.manifest,
+                strategy_command=None,
+                require_applied=False,
+            )
 
     def test_checked_in_bitget_top20_config_uses_requested_entry_sizing(self):
         config_path = (
@@ -456,7 +593,7 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
         )
         self.assertEqual(
             gateway_data["order_gateway"]["routes"][0]["order_session_config"],
-            str(order_session),
+            str(result.order_session_configs[0]),
         )
         self.assertEqual(strategy_data["strategy"]["config"], str(lead_lag))
 
@@ -485,8 +622,7 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
                 for route in gateway_data["order_gateway"]["routes"]
             ],
             [
-                str(self.source_dir / f"bitget_order_session_{route}.toml")
-                for route in range(4)
+                str(path) for path in result.order_session_configs
             ],
         )
 
@@ -536,7 +672,6 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-
         with self.assertRaisesRegex(ValueError, "trading contract"):
             prepare.prepare_runtime_configs(
                 run_id=self.run_id,
@@ -557,12 +692,15 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
             feedback_source=feedback,
             output_dir=self.output_dir,
         )
-        session = self.source_dir / "bitget_order_session_3.toml"
+        session = result.order_session_configs[3]
         session.write_text(
             session.read_text(encoding="utf-8").replace(
                 'margin_mode = "crossed"', 'margin_mode = "isolated"'
             ),
             encoding="utf-8",
+        )
+        self.refresh_config_digest(
+            result, "order_session_config_3", session
         )
 
         with self.assertRaisesRegex(ValueError, "trading contract"):
@@ -949,6 +1087,9 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        self.refresh_config_digest(
+            result, "feedback_config", result.feedback_config
+        )
 
         with self.assertRaisesRegex(ValueError, "credentials"):
             self.mark_applied(result)
@@ -969,6 +1110,9 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
                 'margin_mode = "isolated"',
             ),
             encoding="utf-8",
+        )
+        self.refresh_config_digest(
+            result, "feedback_config", result.feedback_config
         )
 
         with self.assertRaisesRegex(ValueError, "trading contract"):
@@ -1014,6 +1158,9 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
             strategy_text.replace("enabled = true", "enabled = false"),
             encoding="utf-8",
         )
+        self.refresh_config_digest(
+            result, "strategy_config", result.strategy_config
+        )
 
         with self.assertRaisesRegex(ValueError, "feedback.enabled"):
             self.mark_applied(result)
@@ -1034,6 +1181,9 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
                 "enabled = true\npoll_budget = 0",
             ),
             encoding="utf-8",
+        )
+        self.refresh_config_digest(
+            result, "strategy_config", result.strategy_config
         )
 
         with self.assertRaisesRegex(ValueError, "feedback.poll_budget"):

@@ -17,6 +17,7 @@ name = "bitget_order_session_high_availability"
 category = "usdt-futures"
 position_mode = "one_way_mode"
 margin_mode = "crossed"
+client_oid_run_namespace = "0123456789AB"
 request_map_capacity = 16384
 order_id_cache_capacity = 8192
 
@@ -59,6 +60,7 @@ TEST(BitgetOrderSessionConfigTest, ParsesHighAvailabilityPrivateEndpoint) {
   EXPECT_EQ(result.value.category, "usdt-futures");
   EXPECT_EQ(result.value.position_mode, "one_way_mode");
   EXPECT_EQ(result.value.margin_mode, "crossed");
+  EXPECT_EQ(result.value.client_oid_run_namespace.View(), "0123456789AB");
   EXPECT_EQ(result.value.request_map_capacity, 16384U);
   EXPECT_EQ(result.value.order_id_cache_capacity, 8192U);
   EXPECT_EQ(result.value.credentials.api_key_env, "BITGET_TEST_KEY");
@@ -84,6 +86,21 @@ TEST(BitgetOrderSessionConfigTest, LoadsCheckedInConfig) {
   EXPECT_EQ(result.value.name, "bitget_order_session_high_speed_private");
   EXPECT_EQ(result.value.connection.host, "vip-ws-uta-pri-a.bitget.com");
   EXPECT_EQ(result.value.connection.target, "/v3/ws/private");
+  EXPECT_EQ(result.value.client_oid_run_namespace.View(), "000000000000");
+  EXPECT_FALSE(result.value.client_oid_run_namespace.IsConfigured());
+}
+
+TEST(BitgetOrderSessionConfigTest, RejectsMissingOrInvalidRunNamespace) {
+  for (const std::string_view replacement : {
+           "",
+           "client_oid_run_namespace = \"0123456789A\"",
+           "client_oid_run_namespace = \"0123456789AI\"",
+           "client_oid_run_namespace = \"0123456789ab\"",
+       }) {
+    std::string text = BaseToml();
+    Replace(&text, "client_oid_run_namespace = \"0123456789AB\"", replacement);
+    EXPECT_FALSE(Parse(text).ok) << replacement;
+  }
 }
 
 TEST(BitgetOrderSessionConfigTest, RejectsUnsupportedTradingModes) {

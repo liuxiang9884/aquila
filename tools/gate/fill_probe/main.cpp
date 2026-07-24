@@ -102,7 +102,7 @@ struct RuntimeContext {
         .lifecycle_kind = lifecycle_kind,
         .order_role = order_role,
         .local_order_id = event.local_order_id,
-        .parent_id = event.parent_id,
+        .group_id = event.group_id,
         .route_id = event.route_id,
         .event_kind = "gateway_response",
         .response_kind = response_kind,
@@ -112,11 +112,11 @@ struct RuntimeContext {
     });
     fmt::print(
         "fill_probe_order_event run_id={} node_id={} lifecycle_kind={} "
-        "order_role={} local_order_id={} parent_id={} route_id={} "
+        "order_role={} local_order_id={} group_id={} route_id={} "
         "event_kind=gateway_response response_kind={} exchange_order_id={} "
         "exchange_ns={} local_ns={}\n",
         run_id, current_node_id, lifecycle_kind, order_role,
-        event.local_order_id, event.parent_id, event.route_id, response_kind,
+        event.local_order_id, event.group_id, event.route_id, response_kind,
         event.exchange_order_id, event.exchange_ns, event.local_receive_ns);
     if (found == orders->end() || current_node == nullptr) {
       return;
@@ -317,13 +317,13 @@ void DrainBboReader(md::BookTickerShmReader& reader, fp::BboCache* cache,
 
 [[nodiscard]] core::StrategyOrder MakeOrder(
     const fp::FillProbeConfig& config, std::uint64_t local_order_id,
-    std::uint64_t parent_id, aquila::OrderSide side, aquila::TimeInForce tif,
+    std::uint64_t group_id, aquila::OrderSide side, aquila::TimeInForce tif,
     double quantity, double price,
     const aquila::config::InstrumentInfo& instrument, bool reduce_only,
     std::uint16_t route_id) {
   core::OrderPlaceRequest request{
       .local_order_id = local_order_id,
-      .parent_id = parent_id,
+      .group_id = group_id,
       .price = price,
       .quantity = quantity,
       .symbol_id = config.probe.symbol_id,
@@ -363,7 +363,7 @@ void WriteSendEvent(fp::CsvWriters& writers, std::string_view run_id,
       .lifecycle_kind = std::string(lifecycle_kind),
       .order_role = std::string(order_role),
       .local_order_id = record.order.place_request.local_order_id,
-      .parent_id = record.order.place_request.parent_id,
+      .group_id = record.order.place_request.group_id,
       .route_id = record.order.place_request.gateway_route_id,
       .event_kind = std::string(event_kind),
       .response_kind = std::string(response_kind),
@@ -374,11 +374,12 @@ void WriteSendEvent(fp::CsvWriters& writers, std::string_view run_id,
   });
   fmt::print(
       "fill_probe_order_submitted run_id={} node_id={} lifecycle_kind={} "
-      "order_role={} local_order_id={} parent_id={} route_id={} event_kind={} "
+      "order_role={} local_order_id={} group_id={} route_id={} "
+      "event_kind={} "
       "response_kind={} local_ns={} price={} quantity={:.12g}\n",
       run_id, node_id, lifecycle_kind, order_role,
       record.order.place_request.local_order_id,
-      record.order.place_request.parent_id,
+      record.order.place_request.group_id,
       record.order.place_request.gateway_route_id, event_kind, response_kind,
       local_ns, record.price_text, record.order.place_request.quantity);
 }
@@ -397,8 +398,8 @@ void WriteFeedbackEvent(fp::CsvWriters& writers, std::string_view run_id,
       std::string(LowerEnumName(magic_enum::enum_name(event.finish_reason)));
   const std::string reject_reason =
       std::string(LowerEnumName(magic_enum::enum_name(event.reject_reason)));
-  const std::uint64_t parent_id =
-      record == nullptr ? 0 : record->order.place_request.parent_id;
+  const std::uint64_t group_id =
+      record == nullptr ? 0 : record->order.place_request.group_id;
   const std::uint16_t route_id =
       record == nullptr ? core::kAutoGatewayRoute
                         : record->order.place_request.gateway_route_id;
@@ -408,7 +409,7 @@ void WriteFeedbackEvent(fp::CsvWriters& writers, std::string_view run_id,
       .lifecycle_kind = lifecycle_kind,
       .order_role = order_role,
       .local_order_id = event.local_order_id,
-      .parent_id = parent_id,
+      .group_id = group_id,
       .route_id = route_id,
       .event_kind = "feedback",
       .feedback_kind = feedback_kind,
@@ -425,12 +426,12 @@ void WriteFeedbackEvent(fp::CsvWriters& writers, std::string_view run_id,
   });
   fmt::print(
       "fill_probe_order_event run_id={} node_id={} lifecycle_kind={} "
-      "order_role={} local_order_id={} parent_id={} route_id={} "
+      "order_role={} local_order_id={} group_id={} route_id={} "
       "feedback_kind={} finish_reason={} reject_reason={} "
       "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
       "exchange_order_id={} exchange_ns={} local_ns={}\n",
       run_id, node_id, lifecycle_kind, order_role, event.local_order_id,
-      parent_id, route_id, feedback_kind, finish_reason, reject_reason,
+      group_id, route_id, feedback_kind, finish_reason, reject_reason,
       event.cumulative_filled_quantity, event.left_quantity,
       event.exchange_order_id, event.exchange_update_ns,
       event.local_receive_ns);
@@ -517,7 +518,7 @@ void ApplyFeedback(fp::ProbeNode& node,
     const aquila::config::InstrumentInfo& instrument,
     const std::optional<fp::BboSnapshot>& close_bbo,
     core::OrderGatewayClient& gateway, fp::ProbeNode& node, fp::EntryKind kind,
-    std::uint64_t parent_id, fp::OrderSizing sizing, fp::CsvWriters& writers,
+    std::uint64_t group_id, fp::OrderSizing sizing, fp::CsvWriters& writers,
     absl::flat_hash_map<std::uint64_t, OrderRecord>& orders,
     std::uint64_t* next_order_id, std::string_view run_id) {
   const fp::LifecycleState& lifecycle =
@@ -537,7 +538,7 @@ void ApplyFeedback(fp::ProbeNode& node,
       NextLocalOrderId(config.probe.strategy_id, next_order_id);
   const std::uint16_t route_id = lifecycle.entry_route_id;
   core::StrategyOrder order =
-      MakeOrder(config, local_order_id, parent_id, close_side,
+      MakeOrder(config, local_order_id, group_id, close_side,
                 aquila::TimeInForce::kImmediateOrCancel, sizing.quantity,
                 close_price.price, instrument, /*reduce_only=*/true, route_id);
   OrderRecord record{
@@ -997,7 +998,7 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
 
     const aquila::OrderSide entry_side = ToOrderSide(node_side);
     const fp::PriceText entry_price = fp::EntryPrice(entry_side, *quote_bbo);
-    const std::uint64_t parent_id = node_id;
+    const std::uint64_t group_id = node_id;
     std::int64_t first_submit_ns = 0;
     for (const fp::EntryKind kind :
          {fp::EntryKind::kGtc, fp::EntryKind::kIoc}) {
@@ -1011,7 +1012,7 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
       const std::uint64_t local_order_id =
           NextLocalOrderId(context.config.probe.strategy_id, &next_order_id);
       core::StrategyOrder order =
-          MakeOrder(context.config, local_order_id, parent_id, entry_side, tif,
+          MakeOrder(context.config, local_order_id, group_id, entry_side, tif,
                     entry_sizing_result.value.quantity, entry_price.price,
                     *context.instrument, /*reduce_only=*/false, route_id);
       OrderRecord record{.order = order, .lifecycle_kind = kind};
@@ -1075,11 +1076,11 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
 
       (void)SubmitCloseIfNeeded(
           context.config, *context.instrument, gate_cache.latest(), gateway,
-          node, fp::EntryKind::kGtc, parent_id, entry_sizing_result.value,
+          node, fp::EntryKind::kGtc, group_id, entry_sizing_result.value,
           writers, orders, &next_order_id, run_id);
       (void)SubmitCloseIfNeeded(
           context.config, *context.instrument, gate_cache.latest(), gateway,
-          node, fp::EntryKind::kIoc, parent_id, entry_sizing_result.value,
+          node, fp::EntryKind::kIoc, group_id, entry_sizing_result.value,
           writers, orders, &next_order_id, run_id);
 
       if (node.UnresolvedDue(SystemNowNs(), unresolved_timeout_ns)) {

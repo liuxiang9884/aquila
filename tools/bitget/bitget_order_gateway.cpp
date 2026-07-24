@@ -100,6 +100,22 @@ struct PreparedRoute {
       *error = order_session_result.error;
       return false;
     }
+    if (require_credentials &&
+        !order_session_result.value.client_oid_run_namespace.IsConfigured()) {
+      *error = fmt::format(
+          "route '{}' uses reserved client_oid_run_namespace; run prepare "
+          "must generate a run-scoped order session config",
+          route_config.name);
+      return false;
+    }
+    if (!routes->empty() &&
+        routes->front().order_session_config.client_oid_run_namespace !=
+            order_session_result.value.client_oid_run_namespace) {
+      *error =
+          "all Bitget order gateway routes must use the same "
+          "client_oid_run_namespace";
+      return false;
+    }
     aq_bitget::LoginCredentials credentials;
     if (require_credentials &&
         !BuildCredentials(order_session_result.value, &credentials, error)) {
@@ -189,13 +205,14 @@ void LogDryRun(const aq_config::OrderGatewayConfig& gateway_config,
     NOVA_INFO(
         "bitget_order_gateway_route route_id={} name={} worker_cpu_id={} "
         "order_session_cpu_id={} order_session_config={} host={} "
-        "connect_ip={} tls={}",
+        "connect_ip={} tls={} client_oid_run_namespace={}",
         i, route.route_config.name, route.route_config.worker_cpu_id,
         route.order_session_config.connection.runtime_policy.io_cpu_id,
         route.route_config.order_session_config_path.string(),
         route.order_session_config.connection.host,
         route.order_session_config.connection.connect_ip,
-        route.order_session_config.connection.enable_tls ? "true" : "false");
+        route.order_session_config.connection.enable_tls ? "true" : "false",
+        route.order_session_config.client_oid_run_namespace.View());
   }
 }
 
@@ -216,7 +233,8 @@ class BitgetOrderGatewayRouteWorker {
                                 aq_bitget::LoginCredentials credentials)
       : publisher_(route_id, event_queue, shm_header),
         handler_(publisher_),
-        session_(std::move(config.connection), std::move(credentials), handler_,
+        session_(std::move(config.connection), std::move(credentials),
+                 config.client_oid_run_namespace, handler_,
                  config.request_map_capacity, config.order_id_cache_capacity),
         command_worker_(route_id, command_queue, session_, publisher_),
         worker_cpu_id_(worker_cpu_id) {

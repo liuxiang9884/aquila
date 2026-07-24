@@ -83,6 +83,10 @@ constexpr std::string_view kGateLoginSuccess = R"json({
 constexpr std::string_view kBitgetLoginSuccess =
     R"({"event":"login","code":"0","msg":""})";
 
+bitget::ClientOidRunNamespace BitgetRunNamespace() {
+  return bitget::ClientOidRunNamespace::Parse("0123456789AB").value();
+}
+
 struct LiveSymbolSpec {
   std::string_view symbol;
   std::int32_t symbol_id{0};
@@ -323,7 +327,7 @@ class BitgetE2EOrderSession {
             bitget::LoginCredentials{.api_key = "key",
                                      .api_secret = "secret",
                                      .passphrase = "phrase"},
-            *handler_, kOrderCapacity, kOrderCapacity)) {
+            BitgetRunNamespace(), *handler_, kOrderCapacity, kOrderCapacity)) {
     session_->OnConnectionPhase(websocket::ConnectionPhase::kActive);
     std::array<char, 128 + simdjson::SIMDJSON_PADDING> payload{};
     ready_ = session_->Handle(PaddedTextView(kBitgetLoginSuccess, &payload)) ==
@@ -355,8 +359,9 @@ class BitgetE2EOrderSession {
     core::SetOrderSymbol(&request, "BASUSDT");
     std::array<char, bitget::kPlaceOrderRequestBufferSize> buffer;
     for (std::uint64_t sequence = 1; sequence <= 64; ++sequence) {
-      if (bitget::EncodePlaceOrderRequest(request, sequence, buffer).status !=
-          bitget::OrderEncodeStatus::kOk) {
+      if (bitget::EncodePlaceOrderRequest(request, BitgetRunNamespace(),
+                                          sequence, buffer)
+              .status != bitget::OrderEncodeStatus::kOk) {
         return false;
       }
     }
@@ -517,11 +522,11 @@ SyntheticPositionLog() noexcept {
 }
 
 [[nodiscard]] core::OrderPlaceRequest SyntheticOrderRequest(
-    std::uint64_t local_order_id = 0, std::uint64_t parent_id = 1,
+    std::uint64_t local_order_id = 0, std::uint64_t group_id = 1,
     std::uint16_t route_id = 0) noexcept {
   core::OrderPlaceRequest request{
       .local_order_id = local_order_id,
-      .parent_id = parent_id,
+      .group_id = group_id,
       .price = 0.052045,
       .quantity = 1.0,
       .symbol_id = kSymbolId,
@@ -540,11 +545,11 @@ SyntheticPositionLog() noexcept {
 
 [[nodiscard]] std::array<core::OrderPlaceRequest, kFanout>
 SyntheticFanoutOrders(std::uint64_t first_local_order_id,
-                      std::uint64_t parent_id) noexcept {
+                      std::uint64_t group_id) noexcept {
   std::array<core::OrderPlaceRequest, kFanout> orders{};
   for (std::uint16_t route = 0; route < kFanout; ++route) {
     orders[route] =
-        SyntheticOrderRequest(first_local_order_id + route, parent_id, route);
+        SyntheticOrderRequest(first_local_order_id + route, group_id, route);
   }
   return orders;
 }
@@ -2331,14 +2336,14 @@ void BM_OrderGatewayClientPlaceFanout4Synthetic(benchmark::State& state) {
     return;
   }
   std::uint64_t local_order_id = 1;
-  std::uint64_t parent_id = 1;
+  std::uint64_t group_id = 1;
 
   RunManualLatencyBenchmark(
       state,
       [&] {
         for (std::uint16_t route = 0; route < kFanout; ++route) {
           const core::OrderGatewaySendResult sent = gateway.client().PlaceOrder(
-              SyntheticOrderRequest(local_order_id++, parent_id, route));
+              SyntheticOrderRequest(local_order_id++, group_id, route));
           if (sent.status != core::OrderGatewaySendStatus::kOk) {
             state.SkipWithError("order gateway client fanout place failed");
             return;
@@ -2346,9 +2351,9 @@ void BM_OrderGatewayClientPlaceFanout4Synthetic(benchmark::State& state) {
           std::uint64_t command_seq = sent.command_seq;
           benchmark::DoNotOptimize(command_seq);
         }
-        ++parent_id;
+        ++group_id;
       },
-      "parents", state.iterations());
+      "groups", state.iterations());
 }
 
 void BM_OrderGatewayFanoutCurrentPlaceOrder4Routes(benchmark::State& state) {
@@ -2360,11 +2365,11 @@ void BM_OrderGatewayFanoutCurrentPlaceOrder4Routes(benchmark::State& state) {
   FanoutSubmitSamples samples;
   samples.Reserve(kLatencyIterations);
   std::uint64_t local_order_id = 1;
-  std::uint64_t parent_id = 1;
+  std::uint64_t group_id = 1;
 
   for (auto _ : state) {
     const std::array<core::OrderPlaceRequest, kFanout> orders =
-        SyntheticFanoutOrders(local_order_id, parent_id);
+        SyntheticFanoutOrders(local_order_id, group_id);
     FanoutSubmitTiming timing;
     const std::int64_t route_start_ns =
         static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
@@ -2385,7 +2390,7 @@ void BM_OrderGatewayFanoutCurrentPlaceOrder4Routes(benchmark::State& state) {
     state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
     samples.Push(elapsed_ns, route_start_ns, timing);
     local_order_id += kFanout;
-    ++parent_id;
+    ++group_id;
     benchmark::DoNotOptimize(timing.command_seq_accumulator);
     benchmark::DoNotOptimize(timing.commands_enqueued);
   }
@@ -2405,11 +2410,11 @@ void BM_OrderGatewayFanoutBatchModel4Routes(benchmark::State& state) {
   FanoutSubmitSamples samples;
   samples.Reserve(kLatencyIterations);
   std::uint64_t local_order_id = 1;
-  std::uint64_t parent_id = 1;
+  std::uint64_t group_id = 1;
 
   for (auto _ : state) {
     const std::array<core::OrderPlaceRequest, kFanout> orders =
-        SyntheticFanoutOrders(local_order_id, parent_id);
+        SyntheticFanoutOrders(local_order_id, group_id);
     const std::int64_t route_start_ns =
         static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
@@ -2424,7 +2429,7 @@ void BM_OrderGatewayFanoutBatchModel4Routes(benchmark::State& state) {
     state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
     samples.Push(elapsed_ns, route_start_ns, result.timing);
     local_order_id += kFanout;
-    ++parent_id;
+    ++group_id;
     benchmark::DoNotOptimize(result.timing.command_seq_accumulator);
     benchmark::DoNotOptimize(result.timing.commands_enqueued);
   }

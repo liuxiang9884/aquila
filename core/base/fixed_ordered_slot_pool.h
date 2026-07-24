@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <new>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -30,19 +32,61 @@ class FixedOrderedSlotPool {
 
   FixedOrderedSlotPool() noexcept {
     ResetInactiveIndices();
-    [[maybe_unused]] const std::size_t initialized = Initialize(kCapacity);
+  }
+
+  FixedOrderedSlotPool(const FixedOrderedSlotPool&) = delete;
+  FixedOrderedSlotPool& operator=(const FixedOrderedSlotPool&) = delete;
+  FixedOrderedSlotPool(FixedOrderedSlotPool&& other) noexcept
+      : slots_(std::move(other.slots_)),
+        occupied_mask_(other.occupied_mask_),
+        capacity_mask_(other.capacity_mask_),
+        capacity_(other.capacity_),
+        active_count_(other.active_count_),
+        active_indices_(other.active_indices_),
+        active_positions_(other.active_positions_) {
+    other.ResetInactive();
+  }
+
+  FixedOrderedSlotPool& operator=(FixedOrderedSlotPool&& other) noexcept {
+    if (this == &other) {
+      return *this;
+    }
+    slots_ = std::move(other.slots_);
+    occupied_mask_ = other.occupied_mask_;
+    capacity_mask_ = other.capacity_mask_;
+    capacity_ = other.capacity_;
+    active_count_ = other.active_count_;
+    active_indices_ = other.active_indices_;
+    active_positions_ = other.active_positions_;
+    other.ResetInactive();
+    return *this;
   }
 
   [[nodiscard]] std::size_t Initialize(
       std::size_t requested_capacity) noexcept {
-    for (T& slot : slots_) {
-      slot = T{};
+    const Index target_capacity = static_cast<Index>(
+        requested_capacity < kCapacity ? requested_capacity : kCapacity);
+    if (target_capacity == 0) {
+      ResetInactive();
+      return 0;
+    }
+    if (slots_ == nullptr || capacity_ != target_capacity) {
+      std::unique_ptr<T[]> slots{
+          new (std::nothrow) T[static_cast<std::size_t>(target_capacity)]};
+      if (slots == nullptr) {
+        ResetInactive();
+        return 0;
+      }
+      slots_ = std::move(slots);
+    } else {
+      for (std::size_t i = 0; i < capacity_; ++i) {
+        slots_[i] = T{};
+      }
     }
     ResetInactiveIndices();
     occupied_mask_ = 0;
     active_count_ = 0;
-    capacity_ = static_cast<Index>(
-        requested_capacity < kCapacity ? requested_capacity : kCapacity);
+    capacity_ = target_capacity;
     capacity_mask_ = BuildCapacityMask(capacity_);
     return capacity_;
   }
@@ -174,14 +218,22 @@ class FixedOrderedSlotPool {
     active_positions_.fill(kInvalidIndex);
   }
 
-  std::array<T, kCapacity> slots_{};
+  void ResetInactive() noexcept {
+    slots_.reset();
+    occupied_mask_ = 0;
+    capacity_mask_ = 0;
+    capacity_ = 0;
+    active_count_ = 0;
+    ResetInactiveIndices();
+  }
+
+  std::unique_ptr<T[]> slots_;
+  std::uint64_t occupied_mask_{0};
+  std::uint64_t capacity_mask_{0};
+  Index capacity_{0};
+  Index active_count_{0};
   std::array<Index, kCapacity> active_indices_{};
   std::array<Index, kCapacity> active_positions_{};
-  std::uint64_t occupied_mask_{0};
-  std::uint64_t capacity_mask_{
-      BuildCapacityMask(static_cast<Index>(kCapacity))};
-  Index capacity_{static_cast<Index>(kCapacity)};
-  Index active_count_{0};
 };
 
 }  // namespace aquila

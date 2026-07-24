@@ -125,8 +125,9 @@ template <std::size_t N>
 
 template <std::size_t N>
 [[nodiscard]] EncodedTextRequest EncodePlaceOrderRequest(
-    const core::OrderPlaceRequest& request, std::uint64_t encoded_request_id,
-    std::array<char, N>& buffer) noexcept {
+    const core::OrderPlaceRequest& request,
+    const ClientOidRunNamespace& run_namespace,
+    std::uint64_t encoded_request_id, std::array<char, N>& buffer) noexcept {
   if (request.order_type != OrderType::kLimit) {
     return {.status = OrderEncodeStatus::kUnsupportedOrderType};
   }
@@ -134,8 +135,8 @@ template <std::size_t N>
     return {.status = OrderEncodeStatus::kInvalidSymbol};
   }
   std::array<char, 32> client_oid_buffer{};
-  const std::string_view client_oid =
-      ClientOidCodec::Format(request.local_order_id, client_oid_buffer);
+  const std::string_view client_oid = ClientOidCodec::Format(
+      run_namespace, request.local_order_id, client_oid_buffer);
   if (client_oid.empty()) {
     return {.status = OrderEncodeStatus::kInvalidClientOid};
   }
@@ -157,11 +158,12 @@ template <std::size_t N>
 
 template <std::size_t N>
 [[nodiscard]] EncodedTextRequest EncodeCancelOrderRequest(
-    const core::OrderCancelRequest& request, std::uint64_t exchange_order_id,
+    const core::OrderCancelRequest& request,
+    const ClientOidRunNamespace& run_namespace, std::uint64_t exchange_order_id,
     std::uint64_t encoded_request_id, std::array<char, N>& buffer) noexcept {
   std::array<char, 32> client_oid_buffer{};
-  const std::string_view client_oid =
-      ClientOidCodec::Format(request.local_order_id, client_oid_buffer);
+  const std::string_view client_oid = ClientOidCodec::Format(
+      run_namespace, request.local_order_id, client_oid_buffer);
   if (client_oid.empty()) {
     return {.status = OrderEncodeStatus::kInvalidClientOid};
   }

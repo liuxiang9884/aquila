@@ -23,7 +23,7 @@ class CapturingGateway {
   FakeSendResult PlaceOrder(const OrderPlaceRequest& order) noexcept {
     placed_routes.push_back(order.gateway_route_id);
     placed_ids.push_back(order.local_order_id);
-    placed_parent_ids.push_back(order.parent_id);
+    placed_group_ids.push_back(order.group_id);
     return {.status = FakeSendStatus::kOk, .send_local_ns = 123};
   }
 
@@ -35,7 +35,7 @@ class CapturingGateway {
 
   std::vector<std::uint16_t> placed_routes;
   std::vector<std::uint64_t> placed_ids;
-  std::vector<std::uint64_t> placed_parent_ids;
+  std::vector<std::uint64_t> placed_group_ids;
   std::vector<std::uint16_t> cancelled_routes;
   std::vector<std::uint64_t> cancelled_ids;
 };
@@ -94,18 +94,18 @@ TEST(OrderManagerRouteTest, ChildOrdersGetUniqueLocalIdsWithRoutes) {
   EXPECT_EQ(gateway.placed_routes[1], 3U);
 }
 
-TEST(OrderManagerRouteTest, CopiesParentIdToStrategyOrder) {
+TEST(OrderManagerRouteTest, CopiesGroupIdToStrategyOrder) {
   CapturingGateway gateway;
   OrderManager<CapturingGateway> manager(gateway, 8, 7);
   OrderPlaceRequest request = MakeRequest(1);
-  request.parent_id = 9001;
+  request.group_id = 9001;
 
   const OrderPlaceResult placed = manager.PlaceOrder(request);
 
   ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
-  ASSERT_EQ(gateway.placed_parent_ids.size(), 1U);
-  EXPECT_EQ(gateway.placed_parent_ids[0], 9001U);
-  EXPECT_EQ(manager.FindOrder(placed.local_order_id)->place_request.parent_id,
+  ASSERT_EQ(gateway.placed_group_ids.size(), 1U);
+  EXPECT_EQ(gateway.placed_group_ids[0], 9001U);
+  EXPECT_EQ(manager.FindOrder(placed.local_order_id)->place_request.group_id,
             9001U);
 }
 

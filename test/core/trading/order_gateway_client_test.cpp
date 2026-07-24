@@ -79,6 +79,7 @@ OrderPlaceRequest MakeOrder(std::uint64_t local_order_id,
                             std::uint16_t route_id) {
   OrderPlaceRequest request{
       .local_order_id = local_order_id,
+      .group_id = 77,
       .price = 65000.0,
       .quantity = 0.01,
       .symbol_id = 42,
@@ -263,7 +264,7 @@ TEST(OrderGatewayClientTest, PlaceReadyRouteWritesCommandAndRouteTable) {
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   EXPECT_EQ(command.kind, OrderGatewayCommandKind::kPlace);
   EXPECT_EQ(command.command_seq, 1U);
-  EXPECT_EQ(command.payload.place.parent_id, 1001U);
+  EXPECT_EQ(command.payload.place.group_id, 77U);
   EXPECT_EQ(command.payload.place.local_order_id, 1001U);
   EXPECT_EQ(command.payload.place.gateway_route_id, 2U);
   EXPECT_EQ(command.payload.place.SymbolView(), "BTC_USDT");
@@ -273,8 +274,8 @@ TEST(OrderGatewayClientTest, PlaceReadyRouteWritesCommandAndRouteTable) {
   EXPECT_EQ(command.payload.place.price_decimal_places, 0U);
 }
 
-TEST(OrderGatewayClientTest, PlaceCommandUsesParentIdWhenProvided) {
-  const OrderGatewayShmConfig config = MakeCreateConfig("place_parent");
+TEST(OrderGatewayClientTest, PlaceCommandKeepsZeroGroupIdUnchanged) {
+  const OrderGatewayShmConfig config = MakeCreateConfig("place_ungrouped");
   ShmCleanup cleanup(config.shm_name);
   auto shm_result = OrderGatewayShmManager::Create(config);
   ASSERT_TRUE(shm_result.ok) << shm_result.error;
@@ -286,12 +287,12 @@ TEST(OrderGatewayClientTest, PlaceCommandUsesParentIdWhenProvided) {
   ASSERT_EQ(client.PollOrderResponses(runtime), 1U);
 
   OrderPlaceRequest order = MakeOrder(1006, 0);
-  order.parent_id = 9006;
+  order.group_id = 0;
   ASSERT_EQ(client.PlaceOrder(order).status, OrderGatewaySendStatus::kOk);
 
   OrderGatewayCommand command{};
   ASSERT_TRUE(shm.CommandQueue(0).TryPop(&command));
-  EXPECT_EQ(command.payload.place.parent_id, 9006U);
+  EXPECT_EQ(command.payload.place.group_id, 0U);
   EXPECT_EQ(command.payload.place.local_order_id, 1006U);
 }
 
@@ -634,6 +635,7 @@ TEST(OrderGatewayClientTest, CommandRejectedEventConvertsToOrderResponse) {
   event.kind = OrderGatewayEventKind::kCommandRejected;
   event.response_kind = OrderResponseKind::kAck;
   event.local_order_id = 1005;
+  event.group_id = 705;
   event.exchange_order_id = 7005;
   event.worker_event_enqueue_ns = 9005;
   ASSERT_TRUE(shm.EventQueue(1).TryPush(event));
@@ -645,9 +647,42 @@ TEST(OrderGatewayClientTest, CommandRejectedEventConvertsToOrderResponse) {
   ASSERT_EQ(runtime.responses.size(), 1U);
   EXPECT_EQ(runtime.responses[0].kind, OrderResponseKind::kRejected);
   EXPECT_EQ(runtime.responses[0].local_order_id, 1005U);
+  EXPECT_EQ(runtime.responses[0].group_id, 705U);
   EXPECT_EQ(runtime.responses[0].exchange_order_id, 7005U);
   EXPECT_EQ(runtime.responses[0].local_receive_ns, 9005);
   EXPECT_EQ(client.stats().command_rejected_events, 1U);
+}
+
+TEST(OrderGatewayClientTest, OutOfOrderResponsesKeepPerGroupIdentity) {
+  const OrderGatewayShmConfig config =
+      MakeCreateConfig("out_of_order_group_identity");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+
+  OrderGatewayEvent group_b{};
+  group_b.kind = OrderGatewayEventKind::kOrderResponse;
+  group_b.response_kind = OrderResponseKind::kAccepted;
+  group_b.local_order_id = 1202;
+  group_b.group_id = 702;
+  group_b.route_id = 1;
+  group_b.worker_event_enqueue_ns = 9202;
+  OrderGatewayEvent group_a = group_b;
+  group_a.local_order_id = 1201;
+  group_a.group_id = 701;
+  group_a.worker_event_enqueue_ns = 9201;
+  ASSERT_TRUE(shm.EventQueue(1).TryPush(group_b));
+  ASSERT_TRUE(shm.EventQueue(1).TryPush(group_a));
+
+  OrderGatewayClient client = CreateClient(config);
+  CapturingRuntime runtime;
+  EXPECT_EQ(client.PollOrderResponses(runtime), 2U);
+  ASSERT_EQ(runtime.responses.size(), 2U);
+  EXPECT_EQ(runtime.responses[0].local_order_id, 1202U);
+  EXPECT_EQ(runtime.responses[0].group_id, 702U);
+  EXPECT_EQ(runtime.responses[1].local_order_id, 1201U);
+  EXPECT_EQ(runtime.responses[1].group_id, 701U);
 }
 
 TEST(OrderGatewayClientTest, PlaceCommandRejectedClearsRouteTable) {

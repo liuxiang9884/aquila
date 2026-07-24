@@ -122,6 +122,7 @@ class RunGatewaySmokeWithGuardTest(unittest.TestCase):
             data_session_config=self.run_dir / "data.toml",
             gateway_config=self.run_dir / "gateway.toml",
             feedback_config=self.run_dir / "feedback.toml",
+            order_session_config=self.run_dir / "order_session.toml",
             smoke_config=self.run_dir / "smoke.toml",
             manifest=self.manifest,
             market_data_shm="market",
@@ -130,6 +131,7 @@ class RunGatewaySmokeWithGuardTest(unittest.TestCase):
             data_session_log=self.run_dir / "data.log",
             gateway_log=self.run_dir / "gateway.log",
             feedback_log=self.run_dir / "feedback.log",
+            client_oid_run_namespace="0123456789AB",
         )
         self.binaries = pipeline.BinaryPaths(
             data_session=Path("/bin/bitget_data_session"),

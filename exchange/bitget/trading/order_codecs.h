@@ -2,13 +2,10 @@
 #define AQUILA_EXCHANGE_BITGET_TRADING_ORDER_CODECS_H_
 
 #include <array>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
-#include <system_error>
-
-#include <fmt/format.h>
 
 #include "exchange/bitget/trading/order_types.h"
 
@@ -41,33 +38,84 @@ class RequestIdCodec {
 
 class ClientOidCodec {
  public:
+  static constexpr std::size_t kEncodedSize = 29;
+  static constexpr std::size_t kLocalOrderIdEncodedSize = 13;
+
+  [[nodiscard]] static bool ParseLocalOrderId(std::string_view text,
+                                              std::uint64_t* output) noexcept {
+    if (text.size() != kLocalOrderIdEncodedSize || output == nullptr) {
+      return false;
+    }
+    std::uint64_t value = 0;
+    for (const char byte : text) {
+      std::uint64_t digit = 0;
+      if (byte >= '0' && byte <= '9') {
+        digit = static_cast<std::uint64_t>(byte - '0');
+      } else if (byte >= 'A' && byte <= 'Z') {
+        digit = static_cast<std::uint64_t>(byte - 'A' + 10);
+      } else {
+        return false;
+      }
+      if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 36) {
+        return false;
+      }
+      value = value * 36 + digit;
+    }
+    if (value == 0) {
+      return false;
+    }
+    *output = value;
+    return true;
+  }
+
   template <std::size_t N>
   [[nodiscard]] static std::string_view Format(
-      std::uint64_t local_order_id, std::array<char, N>& output) noexcept {
-    if (local_order_id == 0) {
+      const ClientOidRunNamespace& run_namespace, std::uint64_t local_order_id,
+      std::array<char, N>& output) noexcept {
+    if constexpr (N < kEncodedSize) {
       return {};
     }
-    const auto result =
-        fmt::format_to_n(output.data(), output.size(), "a-{}", local_order_id);
-    if (result.size > output.size()) {
+    if (!run_namespace.IsConfigured() || local_order_id == 0) {
       return {};
     }
-    return std::string_view(output.data(), result.size);
+    output[0] = 'a';
+    output[1] = '1';
+    output[2] = '-';
+    const std::string_view namespace_text = run_namespace.View();
+    for (std::size_t i = 0; i < namespace_text.size(); ++i) {
+      output[3 + i] = namespace_text[i];
+    }
+    output[15] = '-';
+    constexpr std::string_view kBase36Alphabet =
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    for (std::size_t index = kEncodedSize; index > 16; --index) {
+      output[index - 1] = kBase36Alphabet[local_order_id % 36];
+      local_order_id /= 36;
+    }
+    if (local_order_id != 0) {
+      return {};
+    }
+    return std::string_view(output.data(), kEncodedSize);
   }
 
   [[nodiscard]] static ParsedClientOid Parse(std::string_view text) noexcept {
-    if (text.size() <= 2 || text.size() > 32 || text[0] != 'a' ||
-        text[1] != '-') {
+    if (text.size() != kEncodedSize || text[0] != 'a' || text[1] != '1' ||
+        text[2] != '-' || text[15] != '-') {
+      return {};
+    }
+    const std::optional<ClientOidRunNamespace> run_namespace =
+        ClientOidRunNamespace::Parse(
+            text.substr(3, kClientOidRunNamespaceSize));
+    if (!run_namespace.has_value()) {
       return {};
     }
     std::uint64_t local_order_id = 0;
-    const char* const first = text.data() + 2;
-    const char* const last = text.data() + text.size();
-    const auto result = std::from_chars(first, last, local_order_id);
-    if (result.ec != std::errc{} || result.ptr != last || local_order_id == 0) {
+    if (!ParseLocalOrderId(text.substr(16), &local_order_id)) {
       return {};
     }
-    return {.ok = true, .local_order_id = local_order_id};
+    return {.ok = true,
+            .run_namespace = *run_namespace,
+            .local_order_id = local_order_id};
   }
 };
 

@@ -59,8 +59,9 @@ std::unique_ptr<OrderFeedbackShmChannel> MakeChannel() {
   return channel;
 }
 
-OrderPlaceRequest MakeLimitRequest() noexcept {
+OrderPlaceRequest MakeLimitRequest(std::uint64_t group_id = 0) noexcept {
   OrderPlaceRequest request{
+      .group_id = group_id,
       .price = 81000,
       .quantity = 2,
       .symbol_id = 7,
@@ -137,6 +138,63 @@ TEST(OrderManagerFeedbackShmIntegrationTest,
   EXPECT_EQ(filled_order->role, OrderRole::kMaker);
   EXPECT_EQ(gateway.cache_forget_calls, 1);
   EXPECT_EQ(gateway.last_forget_local_order_id, placed.local_order_id);
+}
+
+TEST(OrderManagerFeedbackShmIntegrationTest,
+     ReverseFeedbackKeepsLocalGroupMetadataIsolated) {
+  auto channel = MakeChannel();
+  OrderFeedbackShmPublisher publisher(*channel);
+  auto reader_result = OrderFeedbackShmReader::Claim(*channel, 3, 102, true);
+  ASSERT_TRUE(reader_result.ok) << reader_result.error;
+
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8, 3);
+  const OrderPlaceResult group_a = order_manager.PlaceLimitOrder(
+      MakeLimitRequest(701), OrderLocalMetadata{.group_index = 0});
+  const OrderPlaceResult group_b = order_manager.PlaceLimitOrder(
+      MakeLimitRequest(702), OrderLocalMetadata{.group_index = 1});
+  ASSERT_EQ(group_a.status, OrderPlaceStatus::kOk);
+  ASSERT_EQ(group_b.status, OrderPlaceStatus::kOk);
+  ASSERT_NE(group_a.local_order_id, group_b.local_order_id);
+
+  ASSERT_TRUE(publisher.Publish(OrderFeedbackEvent{
+      .kind = OrderFeedbackKind::kFilled,
+      .local_order_id = group_b.local_order_id,
+      .cumulative_filled_quantity = 2,
+      .left_quantity = 0,
+      .fill_price = 81002,
+      .exchange_update_ns = 2002,
+      .local_receive_ns = 2102,
+  }));
+  ASSERT_TRUE(publisher.Publish(OrderFeedbackEvent{
+      .kind = OrderFeedbackKind::kFilled,
+      .local_order_id = group_a.local_order_id,
+      .cumulative_filled_quantity = 1,
+      .left_quantity = 0,
+      .fill_price = 81001,
+      .exchange_update_ns = 2001,
+      .local_receive_ns = 2101,
+  }));
+  EXPECT_EQ(reader_result.value.Poll(8,
+                                     [&](const OrderFeedbackEvent& event) {
+                                       order_manager.OnOrderFeedback(event);
+                                     }),
+            2U);
+
+  const StrategyOrder* order_a =
+      order_manager.FindOrder(group_a.local_order_id);
+  const StrategyOrder* order_b =
+      order_manager.FindOrder(group_b.local_order_id);
+  ASSERT_NE(order_a, nullptr);
+  ASSERT_NE(order_b, nullptr);
+  EXPECT_EQ(order_a->place_request.group_id, 701U);
+  EXPECT_EQ(order_a->group_index, 0U);
+  EXPECT_EQ(order_a->cumulative_filled_quantity, 1);
+  EXPECT_DOUBLE_EQ(order_a->AverageFillPrice(), 81001);
+  EXPECT_EQ(order_b->place_request.group_id, 702U);
+  EXPECT_EQ(order_b->group_index, 1U);
+  EXPECT_EQ(order_b->cumulative_filled_quantity, 2);
+  EXPECT_DOUBLE_EQ(order_b->AverageFillPrice(), 81002);
 }
 
 }  // namespace

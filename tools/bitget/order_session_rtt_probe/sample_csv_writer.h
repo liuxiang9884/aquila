@@ -149,7 +149,8 @@ class ConnectionObservedCsvWriter {
 [[nodiscard]] bool WriteRunMetadata(
     const std::filesystem::path& path, const ProbeConfig& config,
     std::size_t session_count, std::string_view sample_csv_path,
-    std::string_view connection_observed_csv_path, std::string* error);
+    std::string_view connection_observed_csv_path,
+    std::string_view client_oid_run_namespace, std::string* error);
 
 }  // namespace aquila::tools::bitget_order_session_rtt_probe
 

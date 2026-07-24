@@ -63,6 +63,8 @@ struct TestStrategyContext {
 };
 
 struct CapturedOrder {
+  std::uint64_t group_id{0};
+  std::uint16_t group_index{aquila::core::kInvalidOrderGroupIndex};
   aquila::Exchange exchange{aquila::Exchange::kGate};
   std::int32_t symbol_id{0};
   std::string symbol;
@@ -86,8 +88,11 @@ struct SmokeStrategyContext {
   std::vector<std::uint64_t> cancelled_local_order_ids;
 
   aquila::core::OrderPlaceResult PlaceOrder(
-      const aquila::core::OrderPlaceRequest& request) {
+      const aquila::core::OrderPlaceRequest& request,
+      aquila::core::OrderLocalMetadata local_metadata = {}) {
     orders.push_back(CapturedOrder{
+        .group_id = request.group_id,
+        .group_index = local_metadata.group_index,
         .exchange = request.exchange,
         .symbol_id = request.symbol_id,
         .symbol = std::string(request.SymbolView()),

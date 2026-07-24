@@ -145,14 +145,14 @@ struct StrategyOrderPositionLogFields {
 
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 inline void NotifySubmitStageForTest(
-    StrategySubmitStageForTest stage, std::uint64_t parent_id = 0,
+    StrategySubmitStageForTest stage, std::uint64_t group_id = 0,
     std::uint64_t local_order_id = 0,
     std::uint16_t route_id = core::kAutoGatewayRoute,
     std::uint32_t route_index = 0,
     std::uint32_t submission_route_count = 0) noexcept {
   NotifyStrategySubmitStageObserverForTest(StrategySubmitStageRecordForTest{
       .stage = stage,
-      .parent_id = parent_id,
+      .group_id = group_id,
       .local_order_id = local_order_id,
       .route_id = route_id,
       .route_index = route_index,
@@ -374,7 +374,7 @@ inline void LogStrategyOrderIntent(
 }
 
 inline void LogStrategyOrderSubmitted(
-    std::uint64_t local_order_id, std::uint64_t parent_id,
+    std::uint64_t local_order_id, std::uint64_t group_id,
     std::uint16_t route_id, Exchange trigger_exchange,
     std::int32_t trigger_symbol_id, const SignalTiming& timing,
     std::string_view symbol, std::int32_t symbol_id, PairRole signal_role,
@@ -388,7 +388,7 @@ inline void LogStrategyOrderSubmitted(
     FreshnessRejectReason freshness_reject_reason =
         FreshnessRejectReason::kNone) noexcept {
   NOVA_INFO(
-      "lead_lag_order_submitted local_order_id={} parent_id={} route_id={} "
+      "lead_lag_order_submitted local_order_id={} group_id={} route_id={} "
       "trigger_exchange={} "
       "trigger_symbol_id={} trigger_exchange_ns={} "
       "trigger_local_ns={} on_book_ticker_entry_ns={} "
@@ -404,7 +404,7 @@ inline void LogStrategyOrderSubmitted(
       "raw_price={:.12g} order_price={:.12g} "
       "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
       "estimated_notional={:.12g} active_groups={} place_status={}",
-      local_order_id, parent_id, route_id,
+      local_order_id, group_id, route_id,
       magic_enum::enum_name(trigger_exchange), trigger_symbol_id,
       timing.trigger_exchange_ns, timing.trigger_local_ns,
       timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
@@ -426,7 +426,7 @@ inline void LogStrategyOrderSubmitted(
   NotifyStrategyOrderSubmittedLogObserverForTest(
       StrategyOrderSubmittedLogRecordForTest{
           .local_order_id = local_order_id,
-          .parent_id = parent_id,
+          .group_id = group_id,
           .route_id = route_id,
           .trigger_exchange = trigger_exchange,
           .trigger_symbol_id = trigger_symbol_id,
@@ -532,8 +532,8 @@ inline void LogStrategyOrderResponse(
   const core::StrategyOrderTimingSnapshot timing =
       order == nullptr ? core::StrategyOrderTimingSnapshot{}
                        : core::MakeStrategyOrderTimingSnapshot(*order);
-  const std::uint64_t parent_id =
-      order == nullptr ? event.parent_id : order->place_request.parent_id;
+  const std::uint64_t group_id =
+      order == nullptr ? event.group_id : order->place_request.group_id;
   const std::uint16_t route_id =
       order == nullptr ? event.route_id : order->place_request.gateway_route_id;
   const std::int64_t exchange_to_local_ns =
@@ -541,12 +541,12 @@ inline void LogStrategyOrderResponse(
   const std::string_view book_ticker_id_prefix =
       OrderResponseBookTickerIdPrefix(event.kind);
   NOVA_INFO(
-      "lead_lag_order_response kind={} local_order_id={} parent_id={} "
+      "lead_lag_order_response kind={} local_order_id={} group_id={} "
       "route_id={} "
       "exchange_order_id={} local_receive_ns={} exchange_ns={} "
       "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={} "
       "lead_exchange_ns={} lag_exchange_ns={} {}_lead_id={} {}_lag_id={}",
-      magic_enum::enum_name(event.kind), event.local_order_id, parent_id,
+      magic_enum::enum_name(event.kind), event.local_order_id, group_id,
       route_id, event.exchange_order_id, event.local_receive_ns,
       event.exchange_ns, exchange_to_local_ns, timing.ack_rtt_ns,
       timing.response_rtt_ns, market_timing.lead_exchange_ns,
@@ -558,7 +558,7 @@ inline void LogStrategyOrderResponse(
       StrategyOrderResponseLogRecordForTest{
           .kind = event.kind,
           .local_order_id = event.local_order_id,
-          .parent_id = parent_id,
+          .group_id = group_id,
           .route_id = route_id,
           .lead_exchange_ns = market_timing.lead_exchange_ns,
           .lag_exchange_ns = market_timing.lag_exchange_ns,
@@ -569,11 +569,11 @@ inline void LogStrategyOrderResponse(
 #endif
 }
 
-inline void LogStrategyOrderFeedback(
+[[gnu::aligned(64)]] inline void LogStrategyOrderFeedback(
     const OrderFeedbackEvent& event, const core::StrategyOrder* order,
     const SignalTiming& market_timing) noexcept {
-  const std::uint64_t parent_id =
-      order == nullptr ? 0 : order->place_request.parent_id;
+  const std::uint64_t group_id =
+      order == nullptr ? 0 : order->place_request.group_id;
   const std::uint16_t route_id = order == nullptr
                                      ? core::kAutoGatewayRoute
                                      : order->place_request.gateway_route_id;
@@ -581,13 +581,13 @@ inline void LogStrategyOrderFeedback(
       OrderFeedbackBookTickerIdPrefix(event.kind);
   NOVA_INFO(
       "lead_lag_order_feedback kind={} local_order_id={} "
-      "parent_id={} route_id={} exchange_order_id={} "
+      "group_id={} route_id={} exchange_order_id={} "
       "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
       "cancelled_quantity={:.12g} fill_price={:.12g} role={} "
       "finish_reason={} reject_reason={} exchange_update_ns={} "
       "local_receive_ns={} lead_exchange_ns={} lag_exchange_ns={} "
       "{}_lead_id={} {}_lag_id={}",
-      magic_enum::enum_name(event.kind), event.local_order_id, parent_id,
+      magic_enum::enum_name(event.kind), event.local_order_id, group_id,
       route_id, event.exchange_order_id, event.cumulative_filled_quantity,
       event.left_quantity, event.cancelled_quantity, event.fill_price,
       magic_enum::enum_name(event.role),
@@ -602,7 +602,7 @@ inline void LogStrategyOrderFeedback(
       StrategyOrderFeedbackLogRecordForTest{
           .kind = event.kind,
           .local_order_id = event.local_order_id,
-          .parent_id = parent_id,
+          .group_id = group_id,
           .route_id = route_id,
           .lead_exchange_ns = market_timing.lead_exchange_ns,
           .lag_exchange_ns = market_timing.lag_exchange_ns,
@@ -638,6 +638,21 @@ inline void LogStrategyUnknownResultResume(
                                 : std::string_view{"none"});
 }
 
+inline void LogStrategyOrderGroupMismatch(
+    std::string_view operation, const core::StrategyOrder& order,
+    const ExecutionState& execution) noexcept {
+  const ExecutionGroup* active_group =
+      execution.GroupAtIndexForDiagnostics(order.group_index);
+  NOVA_ERROR(
+      "lead_lag_order_group_mismatch operation={} symbol={} symbol_id={} "
+      "local_order_id={} order_group_id={} slot_occupied={} "
+      "active_group_id={} new_entries_paused=true needs_reconcile=true",
+      operation, order.place_request.SymbolView(),
+      order.place_request.symbol_id, order.place_request.local_order_id,
+      order.place_request.group_id, active_group == nullptr ? "false" : "true",
+      active_group == nullptr ? 0 : active_group->group_id);
+}
+
 inline void LogStrategyFeedbackContinuityLost(
     const OrderFeedbackEvent& event) noexcept {
   NOVA_ERROR(
@@ -660,6 +675,26 @@ inline void LogStrategyPairDisabledForOrderDecimalPlaces(
       decimal_place_limit);
 }
 
+inline void LogStrategyParallelOutOfBounds(std::string_view symbol,
+                                           std::int32_t symbol_id,
+                                           std::uint32_t parallel) noexcept {
+  NOVA_ERROR(
+      "lead_lag_runtime_init_failed reason=parallel_out_of_bounds "
+      "symbol={} symbol_id={} parallel={} min_parallel=1 max_parallel={}",
+      symbol, symbol_id, parallel, kMaxLeadLagExecutionGroups);
+}
+
+inline void LogStrategyParallelClamped(
+    std::string_view symbol, std::int32_t symbol_id,
+    std::uint32_t configured_parallel,
+    std::uint32_t effective_parallel) noexcept {
+  NOVA_WARNING(
+      "lead_lag_parallel_clamped symbol={} symbol_id={} "
+      "configured_parallel={} effective_parallel={} max_parallel={}",
+      symbol, symbol_id, configured_parallel, effective_parallel,
+      kMaxLeadLagExecutionGroups);
+}
+
 inline void LogStrategyPairDisabledForOrderMetadata(
     std::string_view symbol, std::int32_t symbol_id, double price_tick,
     double open_notional, double quantity_step,
@@ -679,7 +714,7 @@ inline void LogStrategyOrderFinished(
   const core::StrategyOrderTimingSnapshot timing =
       core::MakeStrategyOrderTimingSnapshot(order);
   NOVA_INFO(
-      "lead_lag_order_finished local_order_id={} parent_id={} route_id={} "
+      "lead_lag_order_finished local_order_id={} group_id={} route_id={} "
       "symbol_id={} symbol={} "
       "status={} reduce_only={} position_id={} position_direction={} "
       "order_role={} entry_local_order_id={} order_finished_local_ns={} "
@@ -691,7 +726,7 @@ inline void LogStrategyOrderFinished(
       "finish_exchange_ns={} ack_rtt_ns={} response_rtt_ns={} "
       "ack_exchange_to_local_ns={} response_exchange_to_local_ns={} "
       "exchange_lifecycle_ns={} lead_exchange_ns={} lag_exchange_ns={}",
-      order.place_request.local_order_id, order.place_request.parent_id,
+      order.place_request.local_order_id, order.place_request.group_id,
       order.place_request.gateway_route_id, order.place_request.symbol_id,
       order.place_request.SymbolView(), magic_enum::enum_name(order.status),
       order.place_request.reduce_only ? "true" : "false", position.position_id,
@@ -710,7 +745,7 @@ inline void LogStrategyOrderFinished(
   NotifyStrategyOrderFinishedLogObserverForTest(
       StrategyOrderFinishedLogRecordForTest{
           .local_order_id = order.place_request.local_order_id,
-          .parent_id = order.place_request.parent_id,
+          .group_id = order.place_request.group_id,
           .route_id = order.place_request.gateway_route_id,
           .position_id = position.position_id,
           .position_direction = position.position_direction,
@@ -734,6 +769,7 @@ class Strategy {
 
   explicit Strategy(Config config, StrategyOptions options = {})
       : config_(std::move(config)), options_(options) {
+    NormalizeParallelConfig();
     raw_market_state_.Reset(config_);
     InitPairRuntimeStates();
   }
@@ -743,7 +779,28 @@ class Strategy {
   Strategy(Strategy&&) noexcept = default;
   Strategy& operator=(Strategy&&) noexcept = default;
 
-#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS) || \
+    defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_BENCHMARK_SEED_HOOKS)
+  [[nodiscard]] bool AddOpenGroupForTest(std::int32_t symbol_id) noexcept {
+    PairRuntimeState* runtime = MutableRuntime(symbol_id);
+    return runtime != nullptr && runtime->execution.StartOpenGroup() != nullptr;
+  }
+
+  [[nodiscard]] bool AddHoldGroupForTest(std::int32_t symbol_id,
+                                         double signed_position_quantity,
+                                         double trailing_price) noexcept {
+    PairRuntimeState* runtime = MutableRuntime(symbol_id);
+    return runtime != nullptr &&
+           runtime->execution.AddHoldGroup(signed_position_quantity,
+                                           trailing_price) != nullptr;
+  }
+
+  [[nodiscard]] std::size_t ActiveGroupCountForTest(
+      std::int32_t symbol_id) noexcept {
+    PairRuntimeState* runtime = MutableRuntime(symbol_id);
+    return runtime == nullptr ? 0 : runtime->execution.active_group_count();
+  }
+
   [[nodiscard]] std::pair<double, double> CurrentGlobalRiskTotalsForTest()
       const noexcept {
     const GlobalRiskTotals totals = CurrentGlobalRiskTotals();
@@ -906,8 +963,8 @@ class Strategy {
   }
 
   template <typename ContextT>
-  void OnOrderFeedback(const OrderFeedbackEvent& event,
-                       ContextT& context) noexcept {
+  [[gnu::aligned(64)]] void OnOrderFeedback(const OrderFeedbackEvent& event,
+                                            ContextT& context) noexcept {
     if (event.kind == OrderFeedbackKind::kContinuityLost) {
       detail::LogStrategyFeedbackContinuityLost(event);
       if (recovery_state_ != RecoveryState::kManualIntervention) {
@@ -1134,6 +1191,19 @@ class Strategy {
     bool rejected_tracked{false};
   };
 
+  void NormalizeParallelConfig() noexcept {
+    for (PairConfig& pair : config_.pairs) {
+      if (pair.execute.parallel <= kMaxLeadLagExecutionGroups) {
+        continue;
+      }
+      const std::uint32_t configured_parallel = pair.execute.parallel;
+      pair.execute.parallel = kMaxLeadLagExecutionGroups;
+      detail::LogStrategyParallelClamped(pair.symbol, pair.symbol_id,
+                                         configured_parallel,
+                                         pair.execute.parallel);
+    }
+  }
+
   [[nodiscard]] SignalTiming MarketTimingForOrder(
       const core::StrategyOrder* order) const noexcept {
     if (order == nullptr) {
@@ -1258,6 +1328,12 @@ class Strategy {
       if (!RuntimeConfigReady(pair)) {
         continue;
       }
+      if (pair.execute.parallel == 0) {
+        detail::LogStrategyParallelOutOfBounds(pair.symbol, pair.symbol_id,
+                                               pair.execute.parallel);
+        stop_requested_ = true;
+        continue;
+      }
       if (!OrderDecimalPlacesWithinRuntimeBounds(pair)) {
         detail::LogStrategyPairDisabledForOrderDecimalPlaces(
             pair.symbol, pair.symbol_id,
@@ -1302,7 +1378,11 @@ class Strategy {
                                pair.capacity.drift_guard_window_capacity);
       runtime.recorder.Init(pair);
       runtime.threshold.Init(pair);
-      runtime.execution.Init(pair.execute.parallel);
+      if (!runtime.execution.Init(pair.execute.parallel)) {
+        runtime.initialized = false;
+        stop_requested_ = true;
+        continue;
+      }
       route->runtime = &runtime;
     }
     for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
@@ -1443,13 +1523,14 @@ class Strategy {
       MarkNeedsReconcile();
       return true;
     }
-    if (runtime->execution.FindPendingOrderByLocalOrderId(
-            order->place_request.local_order_id) == nullptr) {
+    if (runtime->execution.GroupAt(order->group_index,
+                                   order->place_request.group_id) == nullptr) {
       runtime->execution.MarkNeedsReconcile();
+      detail::LogStrategyOrderGroupMismatch("unknown_result", *order,
+                                            runtime->execution);
       return true;
     }
-    return runtime->execution.MarkUnknownResult(
-        order->place_request.local_order_id);
+    return runtime->execution.MarkUnknownResult(*order);
   }
 
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
@@ -1680,18 +1761,25 @@ class Strategy {
                          on_book_ticker_entry_ns, context);
   }
 
-  void RecordTriggeredSignal(
-      PairRuntimeState* runtime, const PairMarketState& market,
-      const QuoteSnapshot& drifted_lead, const RecorderSnapshot& recorder,
-      const AlignmentSnapshot& alignment, const ThresholdSnapshot& threshold,
-      const BookTicker& trigger_ticker, PairRole signal_role,
-      std::int64_t on_book_ticker_entry_ns) noexcept {
+  void PrepareTriggeredSignal(PairRuntimeState* runtime,
+                              const PairMarketState& market,
+                              const QuoteSnapshot& drifted_lead,
+                              const RecorderSnapshot& recorder,
+                              const AlignmentSnapshot& alignment,
+                              const ThresholdSnapshot& threshold,
+                              const BookTicker& trigger_ticker,
+                              std::int64_t on_book_ticker_entry_ns) noexcept {
     last_signal_timing_ =
         BuildSignalTiming(trigger_ticker, market, on_book_ticker_entry_ns,
                           detail::StrategyLogRealtimeNowNs(), *runtime);
     last_signal_diagnostics_ = BuildSignalDiagnostics(
         *runtime, market, drifted_lead, recorder, alignment, threshold);
     last_signal_diagnostics_valid_ = true;
+  }
+
+  void EmitTriggeredSignal(const PairRuntimeState* runtime,
+                           const BookTicker& trigger_ticker,
+                           PairRole signal_role) noexcept {
     detail::LogStrategySignalTriggered(
         trigger_ticker.exchange, trigger_ticker.symbol_id, last_signal_timing_,
         runtime->pair.symbol, runtime->pair.symbol_id, signal_role,
@@ -1705,6 +1793,17 @@ class Strategy {
     }
   }
 
+  void RecordTriggeredSignal(
+      PairRuntimeState* runtime, const PairMarketState& market,
+      const QuoteSnapshot& drifted_lead, const RecorderSnapshot& recorder,
+      const AlignmentSnapshot& alignment, const ThresholdSnapshot& threshold,
+      const BookTicker& trigger_ticker, PairRole signal_role,
+      std::int64_t on_book_ticker_entry_ns) noexcept {
+    PrepareTriggeredSignal(runtime, market, drifted_lead, recorder, alignment,
+                           threshold, trigger_ticker, on_book_ticker_entry_ns);
+    EmitTriggeredSignal(runtime, trigger_ticker, signal_role);
+  }
+
   template <typename ContextT>
   void FinalizeActiveSignal(
       PairRuntimeState* runtime, const PairMarketState& market,
@@ -1713,6 +1812,32 @@ class Strategy {
       const BookTicker& trigger_ticker, PairRole signal_role,
       std::int64_t on_book_ticker_entry_ns, ContextT& context) noexcept {
     if (!last_signal_decision_.triggered) {
+      return;
+    }
+    if (SyntheticPositionAccounting() &&
+        AppliesOpenFreshnessGuard(last_signal_decision_)) {
+      PrepareTriggeredSignal(runtime, market, drifted_lead, recorder, alignment,
+                             threshold, trigger_ticker,
+                             on_book_ticker_entry_ns);
+      if (OpenAtParallelLimit(runtime)) {
+        EmitTriggeredSignal(runtime, trigger_ticker, signal_role);
+        (void)RejectOpenForParallelLimit(runtime);
+        return;
+      }
+      if (DriftGuardBlocksOpen(runtime, market)) {
+        EmitTriggeredSignal(runtime, trigger_ticker, signal_role);
+        (void)RejectOpenForDriftGuard(runtime, market);
+        return;
+      }
+      ExecutionGroup* group =
+          ApplySyntheticSignal(runtime, last_signal_decision_);
+      if (group == nullptr) {
+        EmitTriggeredSignal(runtime, trigger_ticker, signal_role);
+        RejectSignal(SignalRejectReason::kInvalidState);
+        return;
+      }
+      UpdateSubmittedSignalDiagnostics(runtime, group);
+      EmitTriggeredSignal(runtime, trigger_ticker, signal_role);
       return;
     }
     RecordTriggeredSignal(runtime, market, drifted_lead, recorder, alignment,
@@ -1725,7 +1850,7 @@ class Strategy {
       return;
     }
     if (SyntheticPositionAccounting()) {
-      ApplySyntheticSignal(runtime, last_signal_decision_);
+      (void)ApplySyntheticSignal(runtime, last_signal_decision_);
     } else {
       SubmitExternalSignal(runtime, trigger_ticker, signal_role, context);
     }
@@ -1736,33 +1861,28 @@ class Strategy {
            PositionAccountingMode::kSyntheticSignals;
   }
 
-  static void ApplySyntheticSignal(PairRuntimeState* runtime,
-                                   const SignalDecision& decision) noexcept {
+  [[nodiscard]] static ExecutionGroup* ApplySyntheticSignal(
+      PairRuntimeState* runtime, const SignalDecision& decision) noexcept {
     assert(decision.triggered);
     switch (decision.action) {
-      case SignalAction::kOpenLong: {
-        [[maybe_unused]] ExecutionGroup* long_group =
-            runtime->execution.AddHoldGroup(/*signed_position_quantity=*/1.0,
-                                            decision.intent.price);
-        break;
-      }
-      case SignalAction::kOpenShort: {
-        [[maybe_unused]] ExecutionGroup* short_group =
-            runtime->execution.AddHoldGroup(/*signed_position_quantity=*/-1.0,
-                                            decision.intent.price);
-        break;
-      }
+      case SignalAction::kOpenLong:
+        return runtime->execution.AddHoldGroup(
+            /*signed_position_quantity=*/1.0, decision.intent.price);
+      case SignalAction::kOpenShort:
+        return runtime->execution.AddHoldGroup(
+            /*signed_position_quantity=*/-1.0, decision.intent.price);
       case SignalAction::kCloseLong:
       case SignalAction::kStoplossLong:
         ClearSyntheticHold(runtime, decision, /*long_position=*/true);
-        break;
+        return nullptr;
       case SignalAction::kCloseShort:
       case SignalAction::kStoplossShort:
         ClearSyntheticHold(runtime, decision, /*long_position=*/false);
-        break;
+        return nullptr;
       case SignalAction::kNone:
-        break;
+        return nullptr;
     }
+    return nullptr;
   }
 
   static void ClearSyntheticHold(PairRuntimeState* runtime,
@@ -1865,11 +1985,7 @@ class Strategy {
 
   [[nodiscard]] bool RejectOpenForParallelLimit(
       PairRuntimeState* runtime) noexcept {
-    if (!AppliesOpenFreshnessGuard(last_signal_decision_)) {
-      return false;
-    }
-    if (runtime->execution.active_group_count() <
-        runtime->execution.capacity()) {
+    if (!OpenAtParallelLimit(runtime)) {
       return false;
     }
     const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
@@ -1880,6 +1996,13 @@ class Strategy {
                                     instrument.price_tick, 0.0);
     RejectSignal(SignalRejectReason::kParallelLimit);
     return true;
+  }
+
+  [[nodiscard]] bool OpenAtParallelLimit(
+      const PairRuntimeState* runtime) const noexcept {
+    return AppliesOpenFreshnessGuard(last_signal_decision_) &&
+           runtime->execution.active_group_count() >=
+               runtime->execution.capacity();
   }
 
   [[nodiscard]] bool RejectOpenForFreshness(
@@ -1906,13 +2029,7 @@ class Strategy {
 
   [[nodiscard]] bool RejectOpenForDriftGuard(
       PairRuntimeState* runtime, const PairMarketState& market) noexcept {
-    if (!AppliesOpenFreshnessGuard(last_signal_decision_)) {
-      return false;
-    }
-    const DriftGuardSnapshot guard = runtime->drift_guard.Evaluate(
-        runtime->pair.trigger.drift_guard, market.lead.latest_quote,
-        market.lag.latest_quote);
-    if (!guard.blocked) {
+    if (!DriftGuardBlocksOpen(runtime, market)) {
       return false;
     }
     const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
@@ -1922,6 +2039,18 @@ class Strategy {
         last_signal_decision_.intent.price, 0, instrument.price_tick, 0.0);
     RejectSignal(SignalRejectReason::kDriftGuard);
     return true;
+  }
+
+  [[nodiscard]] bool DriftGuardBlocksOpen(
+      const PairRuntimeState* runtime,
+      const PairMarketState& market) const noexcept {
+    if (!AppliesOpenFreshnessGuard(last_signal_decision_)) {
+      return false;
+    }
+    return runtime->drift_guard
+        .Evaluate(runtime->pair.trigger.drift_guard, market.lead.latest_quote,
+                  market.lag.latest_quote)
+        .blocked;
   }
 
   void LogSignalDecisionForPreparedPrice(
@@ -1991,10 +2120,10 @@ class Strategy {
   [[nodiscard]] core::OrderPlaceResult PlacePreparedExternalOrder(
       ContextT& context, std::string_view symbol,
       const InstrumentMetadata& instrument, const PreparedOrderPrice& price,
-      const PreparedOrderQuantity& quantity, std::uint64_t parent_id,
+      const PreparedOrderQuantity& quantity, const ExecutionGroup& group,
       std::uint16_t route_id) noexcept {
     core::OrderPlaceRequest request{
-        .parent_id = parent_id,
+        .group_id = group.group_id,
         .price = price.order_price,
         .quantity = quantity.quantity,
         .symbol_id = last_signal_decision_.intent.symbol_id,
@@ -2010,7 +2139,8 @@ class Strategy {
         .reduce_only = last_signal_decision_.intent.reduce_only,
     };
     core::SetOrderSymbol(&request, symbol);
-    return context.PlaceOrder(request);
+    return context.PlaceOrder(
+        request, core::OrderLocalMetadata{.group_index = group.group_index});
   }
 
   void LogExternalOrderPlaceRejected(
@@ -2030,20 +2160,17 @@ class Strategy {
       PairRole signal_role, const InstrumentMetadata& instrument,
       std::string_view symbol, const PreparedOrderPrice& price,
       const PreparedOrderQuantity& quantity, double order_notional,
-      const core::OrderPlaceResult& placed, std::uint64_t parent_id,
-      std::uint16_t route_id) noexcept {
-    const ExecutionGroup* submitted_group =
-        runtime->execution.FindPendingOrderByLocalOrderId(
-            placed.local_order_id);
+      const core::OrderPlaceResult& placed,
+      const ExecutionGroup& submitted_group, std::uint16_t route_id) noexcept {
     const detail::StrategyOrderPositionLogFields position_log =
         BuildSubmittedOrderPositionLogFields(
-            submitted_group, last_signal_decision_.action,
+            &submitted_group, last_signal_decision_.action,
             last_signal_decision_.intent.side,
             last_signal_decision_.intent.reduce_only, placed.local_order_id);
     detail::LogStrategyOrderSubmitted(
-        placed.local_order_id, parent_id, route_id, trigger_ticker.exchange,
-        trigger_ticker.symbol_id, last_signal_timing_, symbol,
-        runtime->pair.symbol_id, signal_role,
+        placed.local_order_id, submitted_group.group_id, route_id,
+        trigger_ticker.exchange, trigger_ticker.symbol_id, last_signal_timing_,
+        symbol, runtime->pair.symbol_id, signal_role,
         detail::StrategyOrderRoleText(last_signal_decision_.action,
                                       last_signal_decision_.intent.reduce_only),
         last_signal_decision_.action, last_signal_decision_.intent.side,
@@ -2103,16 +2230,17 @@ class Strategy {
       const InstrumentMetadata& instrument, std::string_view symbol,
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
       double order_notional, OpenRiskReservationSlot* risk_slot,
-      std::uint64_t parent_id, std::uint16_t route_id) noexcept {
+      std::uint64_t group_id, std::uint16_t route_id) noexcept {
+    assert(submit_group != nullptr);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
     detail::NotifySubmitStageForTest(
-        StrategySubmitStageForTest::kBeforePlaceOrder, parent_id, 0, route_id);
+        StrategySubmitStageForTest::kBeforePlaceOrder, group_id, 0, route_id);
 #endif
     const core::OrderPlaceResult placed = PlacePreparedExternalOrder(
-        context, symbol, instrument, price, quantity, parent_id, route_id);
+        context, symbol, instrument, price, quantity, *submit_group, route_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
     detail::NotifySubmitStageForTest(
-        StrategySubmitStageForTest::kAfterPlaceOrder, parent_id,
+        StrategySubmitStageForTest::kAfterPlaceOrder, group_id,
         placed.local_order_id, route_id);
 #endif
     if (placed.local_order_id == 0) {
@@ -2126,8 +2254,7 @@ class Strategy {
     }
     return HandleExternalOrderPlaceResult(
         runtime, trigger_ticker, signal_role, context, submit_group, instrument,
-        symbol, price, quantity, order_notional, risk_slot, placed, parent_id,
-        route_id);
+        symbol, price, quantity, order_notional, risk_slot, placed, route_id);
   }
 
   template <typename ContextT>
@@ -2137,17 +2264,16 @@ class Strategy {
       const InstrumentMetadata& instrument, std::string_view symbol,
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
       double order_notional, OpenRiskReservationSlot* risk_slot,
-      const core::OrderPlaceResult& placed, std::uint64_t parent_id,
-      std::uint16_t route_id) noexcept {
+      const core::OrderPlaceResult& placed, std::uint16_t route_id) noexcept {
     if (placed.status == core::OrderPlaceStatus::kOk) {
       const bool tracked =
           OnExternalOrderAccepted(runtime, submit_group, placed.local_order_id);
       if (!tracked) {
         return {.local_order_id = placed.local_order_id};
       }
-      LogExternalOrderSubmitted(runtime, trigger_ticker, signal_role,
-                                instrument, symbol, price, quantity,
-                                order_notional, placed, parent_id, route_id);
+      LogExternalOrderSubmitted(
+          runtime, trigger_ticker, signal_role, instrument, symbol, price,
+          quantity, order_notional, placed, *submit_group, route_id);
       if (!last_signal_decision_.intent.reduce_only) {
         ReserveOpenRisk(risk_slot, quantity.quantity, order_notional);
       }
@@ -2164,25 +2290,6 @@ class Strategy {
       EraseOrderRiskSlot(placed.local_order_id);
     }
     return {.local_order_id = placed.local_order_id};
-  }
-
-  [[nodiscard]] std::uint64_t AllocateExecutionParentId() noexcept {
-    std::uint64_t parent_id = next_execution_parent_id_++;
-    if (next_execution_parent_id_ == 0) {
-      next_execution_parent_id_ = 1;
-    }
-    if (parent_id == 0) {
-      parent_id = next_execution_parent_id_++;
-    }
-    return parent_id;
-  }
-
-  [[nodiscard]] std::uint64_t EnsureExecutionParentId(
-      ExecutionGroup& group) noexcept {
-    if (group.parent_id == 0) {
-      group.parent_id = AllocateExecutionParentId();
-    }
-    return group.parent_id;
   }
 
   template <typename ContextT>
@@ -2311,10 +2418,9 @@ class Strategy {
       return;
     }
     const std::uint64_t submit_group_id = submit_group->group_id;
-    const std::uint64_t parent_id = EnsureExecutionParentId(*submit_group);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
     detail::NotifySubmitStageForTest(
-        StrategySubmitStageForTest::kExecutionGroupReady, parent_id, 0,
+        StrategySubmitStageForTest::kExecutionGroupReady, submit_group_id, 0,
         core::kAutoGatewayRoute, 0, submission_route_count);
 #endif
 
@@ -2327,8 +2433,8 @@ class Strategy {
       const std::uint16_t route_id = submission_routes[route_index];
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
       detail::NotifySubmitStageForTest(
-          StrategySubmitStageForTest::kBeforeAcquireRiskSlot, parent_id, 0,
-          route_id, route_index, submission_route_count);
+          StrategySubmitStageForTest::kBeforeAcquireRiskSlot, submit_group_id,
+          0, route_id, route_index, submission_route_count);
 #endif
       OpenRiskReservationSlot* risk_slot = nullptr;
       if (!last_signal_decision_.intent.reduce_only) {
@@ -2340,17 +2446,17 @@ class Strategy {
       }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
       detail::NotifySubmitStageForTest(
-          StrategySubmitStageForTest::kAfterAcquireRiskSlot, parent_id, 0,
+          StrategySubmitStageForTest::kAfterAcquireRiskSlot, submit_group_id, 0,
           route_id, route_index, submission_route_count);
 #endif
       const ExternalOrderSubmitResult submit_result =
           SubmitPreparedExternalOrder(runtime, trigger_ticker, signal_role,
                                       context, submit_group, instrument, symbol,
                                       price, quantity, order_notional,
-                                      risk_slot, parent_id, route_id);
+                                      risk_slot, submit_group_id, route_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
       detail::NotifySubmitStageForTest(
-          StrategySubmitStageForTest::kAfterSubmitResult, parent_id,
+          StrategySubmitStageForTest::kAfterSubmitResult, submit_group_id,
           submit_result.local_order_id, route_id, route_index,
           submission_route_count);
 #endif
@@ -2372,9 +2478,9 @@ class Strategy {
           runtime->execution.ClearGroupById(submit_group_id);
     }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
-    detail::NotifySubmitStageForTest(StrategySubmitStageForTest::kSubmitDone,
-                                     parent_id, 0, core::kAutoGatewayRoute, 0,
-                                     submission_route_count);
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kSubmitDone, submit_group_id, 0,
+        core::kAutoGatewayRoute, 0, submission_route_count);
 #endif
   }
 
@@ -2404,8 +2510,19 @@ class Strategy {
   void ApplyTrackedRejectedSubmit(PairRuntimeState* runtime,
                                   std::uint64_t local_order_id,
                                   ContextT& context) noexcept {
-    [[maybe_unused]] const ExecutionApplyResult applied =
-        runtime->execution.ApplySubmitRejected(local_order_id);
+    const core::StrategyOrder* order = context.FindOrder(local_order_id);
+    const ExecutionApplyResult applied =
+        order == nullptr ? ExecutionApplyResult::kIgnoredUnknownOrder
+                         : runtime->execution.ApplySubmitRejected(*order);
+    if (applied == ExecutionApplyResult::kIgnoredGroupMismatch ||
+        applied == ExecutionApplyResult::kIgnoredUnknownOrder) {
+      runtime->execution.MarkNeedsReconcile();
+      if (order != nullptr &&
+          applied == ExecutionApplyResult::kIgnoredGroupMismatch) {
+        detail::LogStrategyOrderGroupMismatch("submit_rejected", *order,
+                                              runtime->execution);
+      }
+    }
     if (context.RetireFinishedOrder(local_order_id)) {
       EraseOrderRiskSlot(local_order_id);
     }
@@ -2438,7 +2555,7 @@ class Strategy {
   }
 
   template <typename ContextT>
-  void ApplyFinishedOrder(
+  [[gnu::noinline]] void ApplyFinishedOrder(
       const core::StrategyOrder* order, ContextT& context,
       const SignalTiming& market_timing,
       std::optional<OrderFeedbackKind> feedback_kind = std::nullopt) noexcept {
@@ -2457,9 +2574,17 @@ class Strategy {
       detail::NotifyStrategyFeedbackStageObserverForTest(
           {.stage = StrategyFeedbackStageForTest::kPositionFieldsReady});
 #endif
-      [[maybe_unused]] const ExecutionApplyResult applied =
+      const ExecutionApplyResult applied =
           runtime->execution.ApplyTerminalOrder(*order,
                                                 runtime->pair.lag_instrument);
+      if (applied == ExecutionApplyResult::kIgnoredGroupMismatch ||
+          applied == ExecutionApplyResult::kIgnoredUnknownOrder) {
+        runtime->execution.MarkNeedsReconcile();
+        if (applied == ExecutionApplyResult::kIgnoredGroupMismatch) {
+          detail::LogStrategyOrderGroupMismatch("terminal", *order,
+                                                runtime->execution);
+        }
+      }
       if (runtime->execution.ConsumeUnknownResultAutoRecovered()) {
         detail::LogStrategyUnknownResultResume(*order, feedback_kind);
       }
@@ -2599,15 +2724,16 @@ class Strategy {
     GlobalRiskTotals totals;
     for (const PairRuntimeState* runtime_ptr : initialized_pair_runtimes_) {
       const PairRuntimeState& runtime = *runtime_ptr;
-      for (const ExecutionGroup& group : runtime.execution.groups()) {
-        const double quantity = AbsolutePositionQuantity(group);
-        if (quantity <= kQuantityEpsilon) {
-          continue;
-        }
-        totals.gross_notional += OrderNotional(quantity, group.trailing_price,
-                                               runtime.pair.lag_instrument);
-        totals.holding_position += quantity;
-      }
+      runtime.execution.ForEachActiveGroup(
+          [&](const ExecutionGroup& group) noexcept {
+            const double quantity = AbsolutePositionQuantity(group);
+            if (quantity <= kQuantityEpsilon) {
+              return;
+            }
+            totals.gross_notional += OrderNotional(
+                quantity, group.trailing_price, runtime.pair.lag_instrument);
+            totals.holding_position += quantity;
+          });
     }
     for (std::size_t word_index = 0;
          word_index < reserved_open_risk_slot_bits_.size(); ++word_index) {
@@ -2943,9 +3069,10 @@ class Strategy {
       const PairRuntimeState* runtime,
       const core::StrategyOrder& order) noexcept {
     const ExecutionGroup* group =
-        runtime == nullptr ? nullptr
-                           : runtime->execution.FindPendingOrderByLocalOrderId(
-                                 order.place_request.local_order_id);
+        runtime == nullptr
+            ? nullptr
+            : runtime->execution.GroupAt(order.group_index,
+                                         order.place_request.group_id);
     return detail::StrategyOrderPositionLogFields{
         .position_id = group == nullptr ? 0 : group->group_id,
         .position_direction = PositionDirectionForOrderGroup(
@@ -2981,7 +3108,6 @@ class Strategy {
   std::uint64_t market_calc_row_index_{0};
 #endif
   RecoveryState recovery_state_{RecoveryState::kNormal};
-  std::uint64_t next_execution_parent_id_{1};
   bool stop_requested_{false};
   static constexpr double kPriceEpsilon = 1e-12;
   static constexpr double kQuantityEpsilon = 1e-12;

@@ -87,10 +87,11 @@ Feedback session 必须先 login/subscribed ready。其 duration 至少为 strat
 `config/strategies/lead_lag_bitget_top20_highspeed_fanout4_20260716.toml`，每个 pair 使用 lead/lag freshness `3ms/500ms`、
 `open_notional=10`；entry 计算量
 低于 instrument `min_quantity` 时直接使用最小量，高于最小量时保留计算结果。不允许 strategy-only restart，也不允许复用旧
-gateway/feedback SHM。Bitget V1 以 strict stop-and-flat + fresh-run isolation 替代跨进程唯一 ID 后继续恢复交易；
-persistent ID 只在未来需要 resume/overlap 时重新成为前置条件。
+gateway/feedback SHM。Bitget 普通订单使用 fresh 60-bit run namespace 隔离 `clientOid`；V1 仍以 strict
+stop-and-flat 禁止同一 run resume/overlap，persistent crash-state 只在未来需要恢复交易时重新成为前置条件。
 
-Bitget 每轮先生成 config 与 manifest；该命令会把交易关键的嵌套 config 引用固化为绝对路径，但不联网、不读取账户、不创建 SHM：
+Bitget 每轮先生成 config 与 manifest；该命令从 OS CSPRNG 生成一次 12 字符 namespace，创建逐 route
+OrderSession overlay，并把交易关键的嵌套 config 引用固化为绝对路径，但不联网、不读取账户、不创建 SHM：
 
 ```bash
 scripts/lead_lag/prepare_bitget_live_run.py prepare \
@@ -112,7 +113,8 @@ scripts/lead_lag/prepare_bitget_live_run.py mark-applied \
 ```
 
 `mark-applied` 会验证两个 PID 当前存活且分别是预期 gateway/feedback binary，argv 包含 `--connect` 并以绝对路径精确使用生成配置；
-manifest v2 记录 `/proc/<pid>/stat` start time 防止 PID reuse。三个 TOML 的路径、SHM、route count、逐 route 交易 contract、
+manifest v3 记录 `/proc/<pid>/stat` start time、`client_oid_schema=a1`、12 字符 run namespace 和全部生成 TOML 的 SHA-256。
+Strategy、gateway、feedback、所有 route OrderSession 的路径、digest、namespace、SHM、route count、交易 contract、
 credential env 和两个进程中的实际 credential 值也必须一致；四路还会复核 LeadLag fanout contract。
 Credential 值不会写入 artifact。Ready 仍需按 log 单独确认。旧 run 必须先停止完整交易栈并获得 REST flat 证据，才能创建下一轮。
 
@@ -220,7 +222,9 @@ send-to-finish 和 exchange lifecycle 的分离摘要。
 3. Gate 需要合并日志时，在 `/home/liuxiang/tmp/<run_id>/` 生成 merged input；不改原始 log。Bitget 默认保留 strategy、gateway、feedback 分离日志，分别传给生成器。
 4. 使用本 run 实际 instrument catalog、config、guard stdout 和 run definition。Bitget 优先使用 run 归档的 `inputs/usdt_future_universe.csv`，缺省时生成器使用 checked-in 的 `config/instruments/usdt_future_universe.csv`。
 5. Bitget fillability 只使用已落盘且 manifest 已封口的 BookTicker segment；运行中的 `.tmp` segment 不在 manifest 内，不把缺失窗口归因于市场不可成交。
-6. 如需账户实际 PnL，归档本 run 时间范围内 `/api/v3/trade/fills` 的原始 JSON，并传 `--rest-fills`。生成器只接受能关联本 run authoritative order 的 fill；未提供 REST 时实际手续费/PnL 必须标为 unavailable。
+6. 如需账户实际 PnL，归档本 run 时间范围内 `/api/v3/trade/fills` 的原始 JSON，并传 `--rest-fills`。生成器从
+   guard stdout 的 runtime isolation 读取本 run namespace；foreign/legacy `clientOid` 的 fast-fill 和 REST fill 单独计数并忽略，
+   只接受能关联本 run authoritative order 的 fill。未提供 REST 时实际手续费/PnL 必须标为 unavailable。
 7. 若 `reports/<run_id>/` 已存在，先确认复用、换 run id 或覆盖。
 
 生成：

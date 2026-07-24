@@ -568,6 +568,36 @@ TEST(LeadLagConfigTest, RejectsOrderSessionFanoutAboveMax) {
   EXPECT_NE(result.error.find("order_session_fanout"), std::string::npos);
 }
 
+TEST(LeadLagConfigTest, AcceptsParallelAtFixedGroupCapacity) {
+  const aquila::config::InstrumentCatalog catalog =
+      CatalogWithLagQuantityMetadata(1.0, 0);
+  std::string text = MinimalConfigTomlWithRisk("");
+  const std::string needle = "parallel = 1";
+  const std::size_t position = text.find(needle);
+  ASSERT_NE(position, std::string::npos);
+  text.replace(position, needle.size(), "parallel = 16");
+
+  const auto result = ParseConfigToml(text, catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.pairs[0].execute.parallel, 16U);
+}
+
+TEST(LeadLagConfigTest, PreservesParallelAboveCapacityForStrategyClamp) {
+  const aquila::config::InstrumentCatalog catalog =
+      CatalogWithLagQuantityMetadata(1.0, 0);
+  std::string text = MinimalConfigTomlWithRisk("");
+  const std::string needle = "parallel = 1";
+  const std::size_t position = text.find(needle);
+  ASSERT_NE(position, std::string::npos);
+  text.replace(position, needle.size(), "parallel = 17");
+
+  const auto result = ParseConfigToml(text, catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.pairs[0].execute.parallel, 17U);
+}
+
 TEST(LeadLagConfigTest, ParsesExecutionSlippageTicks) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 

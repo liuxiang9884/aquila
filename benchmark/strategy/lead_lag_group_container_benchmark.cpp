@@ -930,6 +930,7 @@ void RegisterFullActiveContainerBenchmarks(const char* capacity_name) {
 }
 
 void RegisterAllBenchmarks() {
+  RegisterFullActiveContainerBenchmarks<1>("1");
   RegisterFullActiveContainerBenchmarks<2>("2");
   RegisterFullActiveContainerBenchmarks<4>("4");
   RegisterFullActiveContainerBenchmarks<8>("8");

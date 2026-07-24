@@ -23,8 +23,9 @@ class OrderManager {
   OrderManager(const OrderManager&) = delete;
   OrderManager& operator=(const OrderManager&) = delete;
 
-  OrderPlaceResult PlaceOrder(const OrderPlaceRequest& request) noexcept {
-    Order* order = CreateOrder(request);
+  OrderPlaceResult PlaceOrder(const OrderPlaceRequest& request,
+                              OrderLocalMetadata local_metadata = {}) noexcept {
+    Order* order = CreateOrder(request, local_metadata);
     if (order == nullptr) {
       return {.status = OrderPlaceStatus::kPoolFull, .local_order_id = 0};
     }
@@ -43,9 +44,11 @@ class OrderManager {
             .local_order_id = order->place_request.local_order_id};
   }
 
-  OrderPlaceResult PlaceLimitOrder(OrderPlaceRequest request) noexcept {
+  OrderPlaceResult PlaceLimitOrder(
+      OrderPlaceRequest request,
+      OrderLocalMetadata local_metadata = {}) noexcept {
     request.order_type = OrderType::kLimit;
-    return PlaceOrder(request);
+    return PlaceOrder(request, local_metadata);
   }
 
   OrderCancelResult CancelOrder(OrderCancelRequest request) noexcept {
@@ -59,7 +62,7 @@ class OrderManager {
               .local_order_id = request.local_order_id};
     }
 
-    request.parent_id = order->place_request.parent_id;
+    request.group_id = order->place_request.group_id;
     request.gateway_route_id = order->place_request.gateway_route_id;
     const auto sent = order_session_.CancelOrder(request);
     if (!SendOk(sent)) {
@@ -214,7 +217,8 @@ class OrderManager {
     kStale,
   };
 
-  Order* CreateOrder(const OrderPlaceRequest& request) noexcept {
+  Order* CreateOrder(const OrderPlaceRequest& request,
+                     OrderLocalMetadata local_metadata) noexcept {
     Order* order = orders_.Create();
     if (order == nullptr) {
       return nullptr;
@@ -222,6 +226,7 @@ class OrderManager {
     const std::uint64_t local_order_id = order->place_request.local_order_id;
     order->place_request = request;
     order->place_request.local_order_id = local_order_id;
+    order->group_index = local_metadata.group_index;
     order->status = OrderStatus::kCreated;
     return order;
   }

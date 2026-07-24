@@ -57,13 +57,15 @@ void PrintConfig(const aq_bitget::OrderSessionConfig& config, bool connect,
   NOVA_INFO(
       "bitget_order_session_probe_config name={} host={} port={} target={} "
       "tls={} category={} position_mode={} margin_mode={} "
+      "client_oid_run_namespace={} "
       "request_map_capacity={} order_id_cache_capacity={} connect={} "
       "duration_s={}",
       config.name, config.connection.host, config.connection.port,
       config.connection.target, config.connection.enable_tls ? "true" : "false",
       config.category, config.position_mode, config.margin_mode,
-      config.request_map_capacity, config.order_id_cache_capacity,
-      connect ? "true" : "false", duration_seconds);
+      config.client_oid_run_namespace.View(), config.request_map_capacity,
+      config.order_id_cache_capacity, connect ? "true" : "false",
+      duration_seconds);
 }
 
 bool ReadCredential(std::string_view env_name, std::string* output) {
@@ -94,7 +96,8 @@ int RunLoginOnly(aq_bitget::OrderSessionConfig config,
   using Session =
       aq_bitget::OrderSession<LoginOnlyResponseHandler, WebSocketPolicy,
                               aq_bitget::OrderSessionDiagnostics>;
-  Session session(std::move(config.connection), std::move(credentials), handler,
+  Session session(std::move(config.connection), std::move(credentials),
+                  config.client_oid_run_namespace, handler,
                   config.request_map_capacity, config.order_id_cache_capacity);
 
   std::mutex stop_mutex;

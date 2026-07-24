@@ -8,8 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <vector>
+#include <utility>
 
+#include "core/base/fixed_ordered_slot_pool.h"
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_types.h"
 #include "strategy/lead_lag/config.h"
@@ -19,6 +20,9 @@ namespace aquila::strategy::leadlag {
 inline constexpr double kExecutionQuantityEpsilon = 1e-12;
 inline constexpr std::uint32_t kMaxExecutionGroupPendingOrders =
     kMaxOrderSessionFanout * 2U;
+using ExecutionGroupIndex = std::uint16_t;
+inline constexpr ExecutionGroupIndex kInvalidExecutionGroupIndex =
+    core::kInvalidOrderGroupIndex;
 
 enum class ExecutionStage : std::uint8_t {
   kIdle,
@@ -42,6 +46,7 @@ enum class PendingOrderRole : std::uint8_t {
 
 enum class ExecutionApplyResult : std::uint8_t {
   kIgnoredUnknownOrder,
+  kIgnoredGroupMismatch,
   kIgnoredNonTerminal,
   kAppliedHold,
   kAppliedDeleted,
@@ -127,7 +132,9 @@ struct RecoveryApplyResult {
 
 class SignalEngine;
 
-struct ExecutionGroup {
+inline constexpr std::size_t kExecutionGroupCacheLineBytes = 64;
+
+struct alignas(kExecutionGroupCacheLineBytes) ExecutionGroup {
   ExecutionStage stage{ExecutionStage::kIdle};
   std::uint64_t local_order_id{0};
   std::uint64_t entry_local_order_id{0};
@@ -141,7 +148,7 @@ struct ExecutionGroup {
   double absolute_entry_value{0.0};
   double trailing_price{0.0};
   std::uint64_t group_id{0};
-  std::uint64_t parent_id{0};
+  ExecutionGroupIndex group_index{kInvalidExecutionGroupIndex};
   std::uint8_t pending_order_count{0};
   std::uint8_t unknown_result_pending_count{0};
   CloseOrderKind close_order_kind{CloseOrderKind::kNone};
@@ -191,15 +198,19 @@ struct ExecutionGroup {
 
 class ExecutionState {
  public:
-  void Init(std::uint32_t parallel) {
-    groups_.assign(parallel, ExecutionGroup{});
-    active_group_count_ = 0;
+  bool Init(std::uint32_t parallel) noexcept {
+    const bool valid_capacity =
+        parallel > 0 && parallel <= kMaxLeadLagExecutionGroups;
+    const std::size_t initialized_capacity =
+        groups_.Initialize(valid_capacity ? parallel : 0);
+    const bool initialized = valid_capacity && initialized_capacity == parallel;
     next_group_id_ = 1;
     recovery_state_ = RecoveryState::kNormal;
     needs_reconcile_ = false;
     unknown_result_pending_count_ = 0;
     unknown_result_reconcile_active_ = false;
     last_unknown_result_auto_recovered_ = false;
+    return initialized;
   }
 
   [[nodiscard]] ExecutionGroup* StartOpenOrder(
@@ -216,16 +227,22 @@ class ExecutionState {
   }
 
   [[nodiscard]] ExecutionGroup* StartOpenGroup() noexcept {
-    ExecutionGroup* group = FindIdleGroup();
-    if (group == nullptr) {
+    const ExecutionGroupIndex group_index = groups_.EmplaceBack();
+    if (group_index == decltype(groups_)::kInvalidIndex) {
       return nullptr;
     }
-    *group = ExecutionGroup{
+    const std::uint64_t group_id = AllocateGroupId();
+    if (group_id == 0) {
+      (void)groups_.Erase(group_index);
+      return nullptr;
+    }
+    ExecutionGroup& group = groups_.At(group_index);
+    group = ExecutionGroup{
         .stage = ExecutionStage::kOpen,
-        .group_id = next_group_id_++,
+        .group_id = group_id,
+        .group_index = group_index,
     };
-    ++active_group_count_;
-    return group;
+    return &group;
   }
 
   [[nodiscard]] bool AddOpenOrder(ExecutionGroup& group,
@@ -278,18 +295,24 @@ class ExecutionState {
 
   [[nodiscard]] ExecutionGroup* AddHoldGroup(double signed_position_quantity,
                                              double trailing_price) noexcept {
-    ExecutionGroup* group = FindIdleGroup();
-    if (group == nullptr) {
+    const ExecutionGroupIndex group_index = groups_.EmplaceBack();
+    if (group_index == decltype(groups_)::kInvalidIndex) {
       return nullptr;
     }
-    *group = ExecutionGroup{
+    const std::uint64_t group_id = AllocateGroupId();
+    if (group_id == 0) {
+      (void)groups_.Erase(group_index);
+      return nullptr;
+    }
+    ExecutionGroup& group = groups_.At(group_index);
+    group = ExecutionGroup{
         .stage = ExecutionStage::kHold,
         .signed_position_quantity = signed_position_quantity,
         .trailing_price = trailing_price,
-        .group_id = next_group_id_++,
+        .group_id = group_id,
+        .group_index = group_index,
     };
-    ++active_group_count_;
-    return group;
+    return &group;
   }
 
   [[nodiscard]] ExecutionApplyResult ApplyTerminalOrder(
@@ -299,8 +322,11 @@ class ExecutionState {
       return ExecutionApplyResult::kIgnoredNonTerminal;
     }
     ExecutionGroup* group =
-        FindPendingOrderByLocalOrderId(order.place_request.local_order_id);
+        GroupAt(order.group_index, order.place_request.group_id);
     if (group == nullptr) {
+      return ExecutionApplyResult::kIgnoredGroupMismatch;
+    }
+    if (!ContainsPendingOrder(*group, order.place_request.local_order_id)) {
       return ExecutionApplyResult::kIgnoredUnknownOrder;
     }
 
@@ -331,9 +357,14 @@ class ExecutionState {
   }
 
   [[nodiscard]] ExecutionApplyResult ApplySubmitRejected(
-      std::uint64_t local_order_id) noexcept {
-    ExecutionGroup* group = FindPendingOrderByLocalOrderId(local_order_id);
+      const core::StrategyOrder& order) noexcept {
+    ExecutionGroup* group =
+        GroupAt(order.group_index, order.place_request.group_id);
     if (group == nullptr) {
+      return ExecutionApplyResult::kIgnoredGroupMismatch;
+    }
+    const std::uint64_t local_order_id = order.place_request.local_order_id;
+    if (!ContainsPendingOrder(*group, local_order_id)) {
       return ExecutionApplyResult::kIgnoredUnknownOrder;
     }
     const PendingOrderRole order_role =
@@ -364,9 +395,12 @@ class ExecutionState {
     unknown_result_reconcile_active_ = false;
   }
 
-  [[nodiscard]] bool MarkUnknownResult(std::uint64_t local_order_id) noexcept {
-    ExecutionGroup* group = FindPendingOrderByLocalOrderId(local_order_id);
-    if (group == nullptr) {
+  [[nodiscard]] bool MarkUnknownResult(
+      const core::StrategyOrder& order) noexcept {
+    ExecutionGroup* group =
+        GroupAt(order.group_index, order.place_request.group_id);
+    const std::uint64_t local_order_id = order.place_request.local_order_id;
+    if (group == nullptr || !ContainsPendingOrder(*group, local_order_id)) {
       return false;
     }
     const bool can_auto_recover =
@@ -422,21 +456,64 @@ class ExecutionState {
 
   [[nodiscard]] const ExecutionGroup* FindGroupById(
       std::uint64_t group_id) const noexcept {
-    for (const ExecutionGroup& group : groups_) {
-      if (group.active() && group.group_id == group_id) {
-        return &group;
-      }
+    const ExecutionGroupIndex index =
+        groups_.FindIndexIf([group_id](const ExecutionGroup& group) noexcept {
+          return group.active() && group.group_id == group_id;
+        });
+    if (index == decltype(groups_)::kInvalidIndex) {
+      return nullptr;
     }
-    return nullptr;
+    return &groups_.At(index);
   }
 
   [[nodiscard]] ExecutionGroup* FindGroupById(std::uint64_t group_id) noexcept {
-    for (ExecutionGroup& group : groups_) {
-      if (group.active() && group.group_id == group_id) {
-        return &group;
-      }
+    const ExecutionGroupIndex index =
+        groups_.FindIndexIf([group_id](ExecutionGroup& group) noexcept {
+          return group.active() && group.group_id == group_id;
+        });
+    if (index == decltype(groups_)::kInvalidIndex) {
+      return nullptr;
     }
-    return nullptr;
+    return &groups_.At(index);
+  }
+
+  [[nodiscard]] const ExecutionGroup* GroupAt(
+      ExecutionGroupIndex index, std::uint64_t group_id) const noexcept {
+    if (!groups_.occupied(index)) {
+      return nullptr;
+    }
+    const ExecutionGroup& group = groups_.At(index);
+    return group.active() && group.group_id == group_id ? &group : nullptr;
+  }
+
+  [[nodiscard]] ExecutionGroup* GroupAt(ExecutionGroupIndex index,
+                                        std::uint64_t group_id) noexcept {
+    if (!groups_.occupied(index)) {
+      return nullptr;
+    }
+    ExecutionGroup& group = groups_.At(index);
+    return group.active() && group.group_id == group_id ? &group : nullptr;
+  }
+
+  [[nodiscard]] const ExecutionGroup* GroupAtIndexForDiagnostics(
+      ExecutionGroupIndex index) const noexcept {
+    return groups_.occupied(index) ? &groups_.At(index) : nullptr;
+  }
+
+  template <typename Fn>
+  void ForEachActiveGroup(Fn&& fn) const
+      noexcept(noexcept(fn(std::declval<const ExecutionGroup&>()))) {
+    for (const ExecutionGroupIndex index : groups_.active_indices()) {
+      fn(groups_.At(index));
+    }
+  }
+
+  template <typename Fn>
+  void ForEachMutableActiveGroup(Fn&& fn) noexcept(
+      noexcept(fn(std::declval<ExecutionGroup&>()))) {
+    for (const ExecutionGroupIndex index : groups_.active_indices()) {
+      fn(groups_.At(index));
+    }
   }
 
   [[nodiscard]] bool ClearGroupById(std::uint64_t group_id) noexcept {
@@ -452,34 +529,34 @@ class ExecutionState {
       std::uint64_t local_order_id) const noexcept {
     // execute.parallel is a small bounded risk limit, so scanning contiguous
     // groups avoids maintaining a second order index.
-    for (const ExecutionGroup& group : groups_) {
-      if (ContainsPendingOrder(group, local_order_id)) {
-        return &group;
-      }
+    const ExecutionGroupIndex index = groups_.FindIndexIf(
+        [local_order_id](const ExecutionGroup& group) noexcept {
+          return ContainsPendingOrder(group, local_order_id);
+        });
+    if (index == decltype(groups_)::kInvalidIndex) {
+      return nullptr;
     }
-    return nullptr;
+    return &groups_.At(index);
   }
 
   [[nodiscard]] ExecutionGroup* FindPendingOrderByLocalOrderId(
       std::uint64_t local_order_id) noexcept {
-    for (ExecutionGroup& group : groups_) {
-      if (ContainsPendingOrder(group, local_order_id)) {
-        return &group;
-      }
+    const ExecutionGroupIndex index =
+        groups_.FindIndexIf([local_order_id](ExecutionGroup& group) noexcept {
+          return ContainsPendingOrder(group, local_order_id);
+        });
+    if (index == decltype(groups_)::kInvalidIndex) {
+      return nullptr;
     }
-    return nullptr;
+    return &groups_.At(index);
   }
 
   [[nodiscard]] std::size_t active_group_count() const noexcept {
-    return active_group_count_;
+    return groups_.active_count();
   }
 
   [[nodiscard]] std::size_t capacity() const noexcept {
-    return groups_.size();
-  }
-
-  [[nodiscard]] const std::vector<ExecutionGroup>& groups() const noexcept {
-    return groups_;
+    return groups_.capacity();
   }
 
   [[nodiscard]] bool degraded() const noexcept {
@@ -669,21 +746,14 @@ class ExecutionState {
     return rounded;
   }
 
-  [[nodiscard]] ExecutionGroup* FindIdleGroup() noexcept {
-    for (ExecutionGroup& group : groups_) {
-      if (!group.active()) {
-        return &group;
-      }
-    }
-    return nullptr;
-  }
-
   void ClearGroup(ExecutionGroup& group) noexcept {
+    const ExecutionGroupIndex group_index = group.group_index;
     ClearUnknownResultsForGroup(group);
-    if (group.active() && active_group_count_ > 0) {
-      --active_group_count_;
+    if (group_index != kInvalidExecutionGroupIndex) {
+      (void)groups_.Erase(group_index);
+    } else {
+      group = ExecutionGroup{};
     }
-    group = ExecutionGroup{};
   }
 
   [[nodiscard]] static bool AddPendingOrder(ExecutionGroup& group,
@@ -852,24 +922,28 @@ class ExecutionState {
   }
 
   void ClearUnknownResultTracking() noexcept {
-    for (ExecutionGroup& group : groups_) {
+    ForEachMutableActiveGroup([](ExecutionGroup& group) noexcept {
       for (std::uint64_t& local_order_id :
            group.unknown_result_local_order_ids) {
         local_order_id = 0;
       }
       group.unknown_result_pending_count = 0;
-    }
+    });
     unknown_result_pending_count_ = 0;
     unknown_result_reconcile_active_ = false;
     last_unknown_result_auto_recovered_ = false;
   }
 
-  [[nodiscard]] std::vector<ExecutionGroup>& mutable_groups() noexcept {
-    return groups_;
+  [[nodiscard]] std::uint64_t AllocateGroupId() noexcept {
+    if (next_group_id_ == 0) {
+      return 0;
+    }
+    return next_group_id_++;
   }
 
-  std::vector<ExecutionGroup> groups_;
-  std::size_t active_group_count_{0};
+  FixedOrderedSlotPool<ExecutionGroup, kMaxLeadLagExecutionGroups,
+                       ExecutionGroupIndex>
+      groups_;
   std::uint64_t next_group_id_{1};
   RecoveryState recovery_state_{RecoveryState::kNormal};
   bool needs_reconcile_{false};

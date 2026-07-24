@@ -14,6 +14,37 @@ if str(SCRIPT_DIR) not in sys.path:
 import analyze_order_detail as orders
 
 
+class BitgetClientOidTest(unittest.TestCase):
+    def test_decodes_fixed_width_and_legacy_client_oid(self):
+        self.assertEqual(
+            orders.bitget_local_order_id(
+                "a1-0123456789AB-000000000002T"
+            ),
+            "101",
+        )
+        self.assertEqual(
+            orders.bitget_local_order_id(
+                "a1-0123456789AB-3W5E11264SGSF"
+            ),
+            "18446744073709551615",
+        )
+        self.assertEqual(orders.bitget_local_order_id("a-101"), "101")
+
+    def test_rejects_malformed_or_non_order_client_oid(self):
+        for client_oid in (
+            "",
+            "a-flat-1700000000000-0",
+            "a1-0123456789AB-3W5E11264SGSG",
+            "a1-0123456789AI-000000000002T",
+            "a1-0123456789AB-000000000002t",
+            "a1-0123456789AB-00000000002T",
+            "a1-0123456789AB_000000000002T",
+            "a-one",
+        ):
+            with self.subTest(client_oid=client_oid):
+                self.assertEqual(orders.bitget_local_order_id(client_oid), "")
+
+
 def write_file(path: Path, text: str) -> None:
     path.write_text(textwrap.dedent(text).strip() + "\n", encoding="utf-8")
 
@@ -326,12 +357,12 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
                 I2026-05-25 02:29:35.105545332 1:1 strategy.h:LogStrategySignalTriggered:155] lead_lag_signal_triggered trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175105510000 trigger_local_ns=1779676175105520000 on_book_ticker_entry_ns=1779676175105530000 signal_decision_ns=1779676175105540000 lead_exchange_ns=1779676175105510000 lead_local_ns=1779676175105520000 signal_lead_id=5001 lead_freshness_ns=30000 lag_exchange_ns=1779676175105500000 lag_local_ns=1779676175105510000 signal_lag_id=5002 lag_freshness_ns=40000 symbol=PROVE_USDT symbol_id=4 role=kLead action=kOpenLong side=kBuy reduce_only=false position_id=0 raw_price=0.2711
                 I2026-05-25 02:29:35.105549026 1:1 strategy.h:LogStrategyOrderIntent:189] lead_lag_order_intent trigger_exchange_ns=1779676175105510000 trigger_local_ns=1779676175105520000 on_book_ticker_entry_ns=1779676175105530000 signal_decision_ns=1779676175105540000 lead_exchange_ns=1779676175105510000 lead_local_ns=1779676175105520000 signal_lead_id=5001 lead_freshness_ns=30000 lag_exchange_ns=1779676175105500000 lag_local_ns=1779676175105510000 signal_lag_id=5002 lag_freshness_ns=40000 symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=36 price=0.2714 raw_price=0.2711 order_price=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=0
                 I2026-05-25 02:29:35.105560000 1:1 order_session.h:LogGateOrderSessionConnected:1] gate_order_session_connected order_session_id=9 owner_thread_cpu=4 endpoint_available=true local_ip=10.0.0.1 local_port=12345 remote_ip=1.2.3.4 remote_port=443
-                I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place parent_id=777 route_id=3 local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883 order_session_id=9 send_cpu=4
-                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711749 parent_id=777 route_id=3 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175105510000 trigger_local_ns=1779676175105520000 on_book_ticker_entry_ns=1779676175105530000 signal_decision_ns=1779676175105540000 lead_exchange_ns=1779676175105510000 lead_local_ns=1779676175105520000 signal_lead_id=5001 lead_freshness_ns=30000 lag_exchange_ns=1779676175105500000 lag_local_ns=1779676175105510000 signal_lag_id=5002 lag_freshness_ns=40000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
-                I2026-05-25 02:29:35.111554171 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck parent_id=777 route_id=3 local_order_id=288230376151711749 exchange_order_id=0 request_sequence=6 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_request_ingress_ns=1779676175107000000 exchange_response_egress_ns=1779676175107083000 exchange_process_ns=83000 exchange_to_local_ns=4464348 order_session_id=9 ack_cpu=4 tcp_info_available=true tcp_info_rtt_us=7123 tcp_info_rttvar_us=456 tcp_info_retrans=0 tcp_info_total_retrans=1 tcp_info_unacked=0 tcp_info_snd_cwnd=10
-                I2026-05-25 02:29:35.111555000 1:1 strategy.h:LogStrategyOrderResponse:391] lead_lag_order_response kind=kAck local_order_id=288230376151711749 parent_id=777 route_id=3 exchange_order_id=0 local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_to_local_ns=4464348 ack_rtt_ns=5992465 response_rtt_ns=0 lead_exchange_ns=1779676175111000000 lag_exchange_ns=1779676175110900000 ack_lead_id=7001 ack_lag_id=7002
-                I2026-05-25 02:29:35.117544030 1:1 strategy.h:LogStrategyOrderFeedback:272] lead_lag_order_feedback kind=kFilled local_order_id=288230376151711749 parent_id=777 route_id=3 exchange_order_id=260082878984634644 cumulative_filled_quantity=36 left_quantity=0 cancelled_quantity=0 fill_price=0.2714 role=kTaker finish_reason=kUnknown reject_reason=kUnknown filled_lead_id=8001 filled_lag_id=8002
-                I2026-05-25 02:29:35.117545430 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=288230376151711749 parent_id=777 route_id=3 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=288230376151711749 order_finished_local_ns=1779676175117545430 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.2714 last_fill_price=0.2714 exchange_order_id=260082878984634644 active_groups=1 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175111547348 response_local_receive_ns=0 ack_exchange_ns=1779676175107083000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175113000000 ack_rtt_ns=5992465 response_rtt_ns=0 ack_exchange_to_local_ns=4464348 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
+                I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place group_id=777 route_id=3 local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883 order_session_id=9 send_cpu=4
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711749 group_id=777 route_id=3 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175105510000 trigger_local_ns=1779676175105520000 on_book_ticker_entry_ns=1779676175105530000 signal_decision_ns=1779676175105540000 lead_exchange_ns=1779676175105510000 lead_local_ns=1779676175105520000 signal_lead_id=5001 lead_freshness_ns=30000 lag_exchange_ns=1779676175105500000 lag_local_ns=1779676175105510000 signal_lag_id=5002 lag_freshness_ns=40000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.111554171 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck group_id=777 route_id=3 local_order_id=288230376151711749 exchange_order_id=0 request_sequence=6 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_request_ingress_ns=1779676175107000000 exchange_response_egress_ns=1779676175107083000 exchange_process_ns=83000 exchange_to_local_ns=4464348 order_session_id=9 ack_cpu=4 tcp_info_available=true tcp_info_rtt_us=7123 tcp_info_rttvar_us=456 tcp_info_retrans=0 tcp_info_total_retrans=1 tcp_info_unacked=0 tcp_info_snd_cwnd=10
+                I2026-05-25 02:29:35.111555000 1:1 strategy.h:LogStrategyOrderResponse:391] lead_lag_order_response kind=kAck local_order_id=288230376151711749 group_id=777 route_id=3 exchange_order_id=0 local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_to_local_ns=4464348 ack_rtt_ns=5992465 response_rtt_ns=0 lead_exchange_ns=1779676175111000000 lag_exchange_ns=1779676175110900000 ack_lead_id=7001 ack_lag_id=7002
+                I2026-05-25 02:29:35.117544030 1:1 strategy.h:LogStrategyOrderFeedback:272] lead_lag_order_feedback kind=kFilled local_order_id=288230376151711749 group_id=777 route_id=3 exchange_order_id=260082878984634644 cumulative_filled_quantity=36 left_quantity=0 cancelled_quantity=0 fill_price=0.2714 role=kTaker finish_reason=kUnknown reject_reason=kUnknown filled_lead_id=8001 filled_lag_id=8002
+                I2026-05-25 02:29:35.117545430 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=288230376151711749 group_id=777 route_id=3 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=288230376151711749 order_finished_local_ns=1779676175117545430 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.2714 last_fill_price=0.2714 exchange_order_id=260082878984634644 active_groups=1 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175111547348 response_local_receive_ns=0 ack_exchange_ns=1779676175107083000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175113000000 ack_rtt_ns=5992465 response_rtt_ns=0 ack_exchange_to_local_ns=4464348 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
                 """,
             )
 
@@ -347,7 +378,7 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
                 row = next(csv.DictReader(input_file))
 
         self.assertEqual(row["local_order_id"], "288230376151711749")
-        self.assertEqual(row["parent_id"], "777")
+        self.assertEqual(row["group_id"], "777")
         self.assertEqual(row["route_id"], "3")
         self.assertEqual(row["text_order_id"], "t-288230376151711749")
         self.assertEqual(row["exchange_order_id"], "260082878984634644")
@@ -362,7 +393,7 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["filled_lead_id"], "8001")
         self.assertEqual(row["filled_lag_id"], "8002")
         self.assertEqual(latency_rows[0]["signal_lead_id"], "5001")
-        self.assertEqual(latency_rows[0]["parent_id"], "777")
+        self.assertEqual(latency_rows[0]["group_id"], "777")
         self.assertEqual(latency_rows[0]["route_id"], "3")
         self.assertEqual(latency_rows[0]["signal_lag_id"], "5002")
         self.assertEqual(latency_rows[0]["ack_lead_id"], "7001")
@@ -407,7 +438,7 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["tcp_info_rtt_us"], "7123")
         self.assertEqual(row["tcp_info_total_retrans"], "1")
         self.assertEqual(row["order_finished_local_ns"], "1779676175117545430")
-        self.assertEqual(row["source_schema"], "submitted_v1")
+        self.assertEqual(row["source_schema"], "submitted_v2")
         self.assertEqual(row["warnings"], "")
 
     def test_maps_cancelled_feedback_stage_book_ticker_ids(self):
@@ -417,7 +448,7 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
             write_file(
                 log_path,
                 """
-                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711750 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175125510000 trigger_local_ns=1779676175125520000 on_book_ticker_entry_ns=1779676175125530000 signal_decision_ns=1779676175125540000 lead_exchange_ns=1779676175125510000 lead_local_ns=1779676175125520000 signal_lead_id=5101 lead_freshness_ns=30000 lag_exchange_ns=1779676175125500000 lag_local_ns=1779676175125510000 signal_lag_id=5102 lag_freshness_ns=40000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711750 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711750 group_id=1 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175125510000 trigger_local_ns=1779676175125520000 on_book_ticker_entry_ns=1779676175125530000 signal_decision_ns=1779676175125540000 lead_exchange_ns=1779676175125510000 lead_local_ns=1779676175125520000 signal_lead_id=5101 lead_freshness_ns=30000 lag_exchange_ns=1779676175125500000 lag_local_ns=1779676175125510000 signal_lag_id=5102 lag_freshness_ns=40000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711750 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
                 I2026-05-25 02:29:35.117544030 1:1 strategy.h:LogStrategyOrderFeedback:272] lead_lag_order_feedback kind=kCancelled local_order_id=288230376151711750 exchange_order_id=260082878984634645 cumulative_filled_quantity=0 left_quantity=36 cancelled_quantity=36 fill_price=0 role=kTaker finish_reason=kImmediateOrCancel reject_reason=kUnknown exchange_update_ns=1779676175129000000 local_receive_ns=1779676175130000000 lead_exchange_ns=1779676175128000000 lag_exchange_ns=1779676175127900000 cancelled_lead_id=8101 cancelled_lag_id=8102
                 """,
             )
@@ -441,7 +472,7 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
             write_file(
                 log_path,
                 """
-                I2026-05-25 02:29:35.105549026 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711750 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175125510000 trigger_local_ns=1779676175125520000 on_book_ticker_entry_ns=1779676175125530000 signal_decision_ns=1779676175125540000 lead_exchange_ns=1779676175125510000 lag_exchange_ns=1779676175125500000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=exit action=kCloseLong side=kSell reduce_only=true position_id=1 position_event=kExitSubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2713 order_price=0.271 price_text=0.2710 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.56 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.105549026 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711750 group_id=1 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175125510000 trigger_local_ns=1779676175125520000 on_book_ticker_entry_ns=1779676175125530000 signal_decision_ns=1779676175125540000 lead_exchange_ns=1779676175125510000 lag_exchange_ns=1779676175125500000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=exit action=kCloseLong side=kSell reduce_only=true position_id=1 position_event=kExitSubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2713 order_price=0.271 price_text=0.2710 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.56 active_groups=1 place_status=kOk
                 I2026-05-25 02:29:35.125612335 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711750 request_sequence=7 encoded_request_id=144115188075855879 contract=PROVE_USDT side=kSell quantity=36 price=0.2710 tif=kImmediateOrCancel reduce_only=true inflight=6 request_send_local_ns=1779676175125607942
                 I2026-05-25 02:29:35.129547287 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck local_order_id=288230376151711750 exchange_order_id=0 request_sequence=7 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175129546235 exchange_ns=1779676175127009000 exchange_to_local_ns=2537235
                 I2026-05-25 02:29:35.135543485 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=288230376151711750 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=true position_id=1 position_direction=kLong order_role=exit entry_local_order_id=288230376151711749 order_finished_local_ns=1779676175135543485 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.271244 last_fill_price=0.271244 exchange_order_id=260082878984634672 active_groups=0 request_send_local_ns=1779676175125607942 ack_local_receive_ns=1779676175129546235 response_local_receive_ns=0 ack_exchange_ns=1779676175127009000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175128000000 ack_rtt_ns=3938293 response_rtt_ns=0 ack_exchange_to_local_ns=2537235 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
@@ -452,7 +483,8 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
 
         self.assertEqual(len(result.rows), 1)
         row = result.rows[0]
-        self.assertEqual(row["source_schema"], "submitted_v1")
+        self.assertEqual(row["source_schema"], "submitted_v2")
+
         self.assertEqual(row["position_id"], "1")
         self.assertEqual(row["position_event"], "kExitSubmit")
         self.assertEqual(row["position_direction"], "kLong")
@@ -463,6 +495,151 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["order_finished_local_ns"], "1779676175135543485")
         self.assertEqual(row["warnings"], "")
 
+    def test_ignores_legacy_submitted_log_without_group_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "run.log"
+            write_file(
+                log_path,
+                """
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=42 parent_id=777 route_id=3 symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false quantity=1 order_price=1 place_status=kOk
+                """,
+            )
+
+            result = orders.analyze_order_detail(log_path)
+
+        self.assertEqual(result.rows, [])
+
+    def test_multi_group_identity_isolated_across_symbol_run_and_fanout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            run_a_log = base / "run-a.log"
+            run_b_log = base / "run-b.log"
+            write_file(
+                run_a_log,
+                """
+                I] lead_lag_order_submitted local_order_id=1001 group_id=1 route_id=0 symbol=ALPHA_USDT symbol_id=4 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_direction=kLong entry_local_order_id=1001 quantity=1 order_price=100 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=1002 group_id=1 route_id=1 symbol=ALPHA_USDT symbol_id=4 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_direction=kLong entry_local_order_id=1001 quantity=1 order_price=100 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=1003 group_id=2 route_id=0 symbol=ALPHA_USDT symbol_id=4 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=2 position_direction=kLong entry_local_order_id=1003 quantity=1 order_price=101 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=1004 group_id=2 route_id=0 symbol=ALPHA_USDT symbol_id=4 order_role=exit action=kCloseLong side=kSell reduce_only=true position_id=2 position_direction=kLong entry_local_order_id=1003 quantity=0.5 order_price=102 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=1005 group_id=2 route_id=1 symbol=ALPHA_USDT symbol_id=4 order_role=exit action=kCloseLong side=kSell reduce_only=true position_id=2 position_direction=kLong entry_local_order_id=1003 quantity=0.5 order_price=103 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=2001 group_id=1 route_id=0 symbol=BETA_USDT symbol_id=7 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_direction=kLong entry_local_order_id=2001 quantity=1 order_price=200 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=9999 parent_id=1 route_id=3 symbol=ALPHA_USDT symbol_id=4 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=9999 quantity=1 order_price=999 place_status=kOk
+                I] lead_lag_order_feedback kind=kPartialFilled local_order_id=1003 group_id=2 route_id=0 cumulative_filled_quantity=0.4 left_quantity=0.6 fill_price=101 exchange_update_ns=30 local_receive_ns=31
+                I] lead_lag_order_feedback kind=kFilled local_order_id=1003 group_id=2 route_id=0 cumulative_filled_quantity=1 left_quantity=0 fill_price=101 exchange_update_ns=40 local_receive_ns=41
+                I] lead_lag_order_finished local_order_id=2001 group_id=1 route_id=0 symbol=BETA_USDT symbol_id=7 status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=2001 cumulative_filled_quantity=1 average_fill_price=200 exchange_order_id=62001 order_finished_local_ns=70
+                I] lead_lag_order_finished local_order_id=1005 group_id=2 route_id=1 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=true position_id=2 position_direction=kLong order_role=exit entry_local_order_id=1003 cumulative_filled_quantity=0.5 average_fill_price=103 exchange_order_id=61005 order_finished_local_ns=65
+                I] lead_lag_order_finished local_order_id=1004 group_id=2 route_id=0 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=true position_id=2 position_direction=kLong order_role=exit entry_local_order_id=1003 cumulative_filled_quantity=0.5 average_fill_price=102 exchange_order_id=61004 order_finished_local_ns=60
+                I] lead_lag_order_finished local_order_id=1003 group_id=2 route_id=0 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=false position_id=2 position_direction=kLong order_role=entry entry_local_order_id=1003 cumulative_filled_quantity=1 average_fill_price=101 exchange_order_id=61003 order_finished_local_ns=50
+                I] lead_lag_order_finished local_order_id=1002 group_id=1 route_id=1 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=1001 cumulative_filled_quantity=1 average_fill_price=100 exchange_order_id=61002 order_finished_local_ns=45
+                I] lead_lag_order_finished local_order_id=1001 group_id=1 route_id=0 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=1001 cumulative_filled_quantity=1 average_fill_price=100 exchange_order_id=61001 order_finished_local_ns=44
+                """,
+            )
+            write_file(
+                run_b_log,
+                """
+                I] lead_lag_order_submitted local_order_id=3001 group_id=1 route_id=0 symbol=ALPHA_USDT symbol_id=4 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_direction=kLong entry_local_order_id=3001 quantity=1 order_price=300 place_status=kOk
+                I] lead_lag_order_finished local_order_id=3001 group_id=1 route_id=0 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=3001 cumulative_filled_quantity=1 average_fill_price=300 exchange_order_id=63001 order_finished_local_ns=80
+                """,
+            )
+
+            run_a = orders.analyze_order_detail(run_a_log, run_id="run-a")
+            run_b = orders.analyze_order_detail(run_b_log, run_id="run-b")
+            order_rows = run_a.rows + run_b.rows
+            latency_rows = orders.build_latency_detail_rows(order_rows)
+            position_rows = orders.build_position_detail_rows(order_rows)
+
+        self.assertEqual(len(order_rows), 7)
+        self.assertNotIn("9999", {row["local_order_id"] for row in order_rows})
+        self.assertTrue(
+            all(row["source_schema"] == "submitted_v2" for row in order_rows)
+        )
+        self.assertEqual(
+            {
+                (row["run_id"], row["symbol_id"], row["group_id"])
+                for row in order_rows
+            },
+            {
+                ("run-a", "4", "1"),
+                ("run-a", "4", "2"),
+                ("run-a", "7", "1"),
+                ("run-b", "4", "1"),
+            },
+        )
+        fanout_rows = [
+            row
+            for row in order_rows
+            if (row["run_id"], row["symbol_id"], row["group_id"])
+            == ("run-a", "4", "1")
+        ]
+        self.assertEqual(
+            [(row["local_order_id"], row["route_id"]) for row in fanout_rows],
+            [("1001", "0"), ("1002", "1")],
+        )
+        entry = next(row for row in order_rows if row["local_order_id"] == "1003")
+        self.assertEqual(entry["group_id"], "2")
+        self.assertEqual(entry["status"], "kFilled")
+        self.assertEqual(entry["cumulative_filled_quantity"], "1")
+        self.assertEqual(len(latency_rows), 7)
+        self.assertEqual(
+            {
+                (row["run_id"], row["symbol_id"], row["group_id"])
+                for row in latency_rows
+            },
+            {
+                ("run-a", "4", "1"),
+                ("run-a", "4", "2"),
+                ("run-a", "7", "1"),
+                ("run-b", "4", "1"),
+            },
+        )
+        self.assertTrue(
+            all(row["position_id"] == row["group_id"] for row in order_rows)
+        )
+        self.assertEqual(
+            {
+                row["entry_local_order_id"]
+                for row in position_rows
+                if row["run_id"] == "run-a"
+                and row["symbol_id"] == "4"
+                and row["position_id"] == "1"
+            },
+            {"1001", "1002"},
+        )
+        self.assertEqual(
+            {
+                (row["entry_local_order_id"], row["exit_local_order_id"])
+                for row in position_rows
+                if row["run_id"] == "run-a"
+                and row["symbol_id"] == "4"
+                and row["position_id"] == "2"
+            },
+            {("1003", "1004"), ("1003", "1005")},
+        )
+        self.assertIn(
+            ("run-a", "7", "1", "2001"),
+            {
+                (
+                    row["run_id"],
+                    row["symbol_id"],
+                    row["position_id"],
+                    row["entry_local_order_id"],
+                )
+                for row in position_rows
+            },
+        )
+        self.assertIn(
+            ("run-b", "4", "1", "3001"),
+            {
+                (
+                    row["run_id"],
+                    row["symbol_id"],
+                    row["position_id"],
+                    row["entry_local_order_id"],
+                )
+                for row in position_rows
+            },
+        )
+
     def test_zero_gate_ack_header_fields_are_treated_as_missing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
@@ -470,7 +647,7 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
             write_file(
                 log_path,
                 """
-                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=42 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=42 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 place_status=kOk
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=42 group_id=1 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=42 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 place_status=kOk
                 I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=42 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883
                 I2026-05-25 02:29:35.111554171 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck local_order_id=42 exchange_order_id=0 request_sequence=6 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_request_ingress_ns=0 exchange_response_egress_ns=0 exchange_process_ns=0 exchange_to_local_ns=4464348
                 I2026-05-25 02:29:35.117545430 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=42 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=42 order_finished_local_ns=1779676175117545430 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.2714 last_fill_price=0.2714 exchange_order_id=260082878984634644 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175111547348 response_local_receive_ns=0 ack_exchange_ns=1779676175107083000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175113000000 ack_rtt_ns=5992465 response_rtt_ns=0 ack_exchange_to_local_ns=4464348 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
@@ -499,12 +676,12 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
             write_file(
                 log_path,
                 """
-                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711749 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175105510000 trigger_local_ns=1779676175105520000 on_book_ticker_entry_ns=1779676175105530000 signal_decision_ns=1779676175105540000 lead_exchange_ns=1779676175105510000 lag_exchange_ns=1779676175105500000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711749 group_id=1 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175105510000 trigger_local_ns=1779676175105520000 on_book_ticker_entry_ns=1779676175105530000 signal_decision_ns=1779676175105540000 lead_exchange_ns=1779676175105510000 lag_exchange_ns=1779676175105500000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
                 I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883
                 I2026-05-25 02:29:35.111554171 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck local_order_id=288230376151711749 exchange_order_id=0 request_sequence=6 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_request_ingress_ns=1779676175107000000 exchange_response_egress_ns=1779676175107083000 exchange_process_ns=83000 exchange_to_local_ns=4464348
                 I2026-05-25 02:29:35.117544030 1:1 strategy.h:LogStrategyOrderFeedback:272] lead_lag_order_feedback kind=kFilled local_order_id=288230376151711749 exchange_order_id=260082878984634644 cumulative_filled_quantity=36 left_quantity=0 cancelled_quantity=0 fill_price=0.2714 role=kTaker finish_reason=kUnknown reject_reason=kUnknown
                 I2026-05-25 02:29:35.117545430 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=288230376151711749 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=288230376151711749 order_finished_local_ns=1779676175117545430 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.2714 last_fill_price=0.2714 exchange_order_id=260082878984634644 active_groups=1 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175111547348 response_local_receive_ns=0 ack_exchange_ns=1779676175107083000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175113000000 ack_rtt_ns=5992465 response_rtt_ns=0 ack_exchange_to_local_ns=4464348 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
-                I2026-05-25 02:29:35.105549026 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711750 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175125510000 trigger_local_ns=1779676175125520000 on_book_ticker_entry_ns=1779676175125530000 signal_decision_ns=1779676175125540000 lead_exchange_ns=1779676175125510000 lag_exchange_ns=1779676175125500000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=exit action=kCloseLong side=kSell reduce_only=true position_id=1 position_event=kExitSubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2713 order_price=0.271 price_text=0.2710 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.56 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.105549026 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711750 group_id=1 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175125510000 trigger_local_ns=1779676175125520000 on_book_ticker_entry_ns=1779676175125530000 signal_decision_ns=1779676175125540000 lead_exchange_ns=1779676175125510000 lag_exchange_ns=1779676175125500000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=exit action=kCloseLong side=kSell reduce_only=true position_id=1 position_event=kExitSubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2713 order_price=0.271 price_text=0.2710 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.56 active_groups=1 place_status=kOk
                 I2026-05-25 02:29:35.125612335 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711750 request_sequence=7 encoded_request_id=144115188075855879 contract=PROVE_USDT side=kSell quantity=36 price=0.2710 tif=kImmediateOrCancel reduce_only=true inflight=6 request_send_local_ns=1779676175125607942
                 I2026-05-25 02:29:35.129547287 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck local_order_id=288230376151711750 exchange_order_id=0 request_sequence=7 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175129546235 exchange_ns=1779676175127009000 exchange_to_local_ns=2537235
                 I2026-05-25 02:29:35.135543485 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=288230376151711750 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=true position_id=1 position_direction=kLong order_role=exit entry_local_order_id=288230376151711749 order_finished_local_ns=1779676175135543485 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.271244 last_fill_price=0.271244 exchange_order_id=260082878984634672 active_groups=0 request_send_local_ns=1779676175125607942 ack_local_receive_ns=1779676175129546235 response_local_receive_ns=0 ack_exchange_ns=1779676175127009000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175128000000 ack_rtt_ns=3938293 response_rtt_ns=0 ack_exchange_to_local_ns=2537235 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
@@ -558,7 +735,7 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
             write_file(
                 log_path,
                 """
-                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711749 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175105510000 trigger_local_ns=1779676175105520000 on_book_ticker_entry_ns=1779676175105530000 signal_decision_ns=1779676175105540000 lead_exchange_ns=1779676175105510000 lag_exchange_ns=1779676175105500000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711749 group_id=1 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175105510000 trigger_local_ns=1779676175105520000 on_book_ticker_entry_ns=1779676175105530000 signal_decision_ns=1779676175105540000 lead_exchange_ns=1779676175105510000 lag_exchange_ns=1779676175105500000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
                 I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883
                 I2026-05-25 02:29:35.111554171 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck local_order_id=288230376151711749 exchange_order_id=0 request_sequence=6 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_request_ingress_ns=1779676175107000000 exchange_response_egress_ns=1779676175107083000 exchange_process_ns=83000 exchange_to_local_ns=4464348
                 I2026-05-25 02:29:35.117545430 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=288230376151711749 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=288230376151711749 order_finished_local_ns=1779676175117545430 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.2714 last_fill_price=0.2714 exchange_order_id=260082878984634644 active_groups=1 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175111547348 response_local_receive_ns=0 ack_exchange_ns=1779676175107083000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175113000000 ack_rtt_ns=5992465 response_rtt_ns=0 ack_exchange_to_local_ns=4464348 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
@@ -623,7 +800,7 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
             write_file(
                 log_path,
                 """
-                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=42 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=900 trigger_local_ns=1000 on_book_ticker_entry_ns=1100 signal_decision_ns=1250 lead_exchange_ns=901 lag_exchange_ns=902 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=42 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=42 group_id=1 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=900 trigger_local_ns=1000 on_book_ticker_entry_ns=1100 signal_decision_ns=1250 lead_exchange_ns=901 lag_exchange_ns=902 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=42 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
                 I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=42 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1500
                 """,
             )

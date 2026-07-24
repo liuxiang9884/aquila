@@ -49,7 +49,7 @@ struct FakeOrderSession {
 static_assert(
     std::is_same_v<decltype(&StrategyContext<FakeOrderSession>::PlaceOrder),
                    OrderPlaceResult (StrategyContext<FakeOrderSession>::*)(
-                       const OrderPlaceRequest&) noexcept>);
+                       const OrderPlaceRequest&, OrderLocalMetadata) noexcept>);
 
 OrderPlaceRequest MakeLimitRequest() noexcept {
   OrderPlaceRequest request{.price = 65000.0,
@@ -101,6 +101,21 @@ TEST(StrategyContextTest, PlaceOrderCopiesGenericOrderTypeToStrategyOrder) {
   const StrategyOrder* order = context.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
   EXPECT_EQ(order->place_request.order_type, OrderType::kMarket);
+}
+
+TEST(StrategyContextTest, PlaceOrderCopiesLocalMetadataToStrategyOrder) {
+  FakeOrderSession order_session;
+  StrategyContext<FakeOrderSession>::OrderManagerT order_manager(order_session,
+                                                                 8);
+  StrategyContext<FakeOrderSession> context(order_manager);
+
+  const OrderPlaceResult placed = context.PlaceOrder(
+      MakeLimitRequest(), OrderLocalMetadata{.group_index = 3});
+
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  const StrategyOrder* order = context.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->group_index, 3);
 }
 
 TEST(StrategyContextTest, PlaceLimitOrderForcesLimitOrderType) {

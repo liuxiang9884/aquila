@@ -54,7 +54,7 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `Trade` 64 bytes；historical/recorder 只接受 typed binary format v1，旧 raw/ABI artifact 需重录。
 - Fastest-route fusion 按 `(exchange,symbol_id,id)` 单调 first-processed-wins，输出一条 canonical stream；行情证据不能外推为
   fillability/PnL。当前架构见 fusion 文档。
-- Gate 单路 trading、private feedback、OrderGateway SHM V3 和 LeadLag gateway backend 已实现；多路 gateway 尚无真实订单证据。
+- Gate 单路 trading、private feedback、OrderGateway SHM v4 和 LeadLag gateway backend 已实现；v4 在 Gate/Bitget place、cancel、response 与相关 smoke/probe 中传播 `group_id`，多路 gateway 尚无真实订单证据。
   Ack/direct response 不是 terminal，unknown/continuity 进入 reconcile。
 - Bitget `OrderSession`、`OrderFeedbackSession`、RTT probe、OrderGateway 与 LeadLag lag metadata 已实现。HA/高速 endpoint probe
   已有 passive IOC Ack+terminal+REST flat 双证据；fanout=1 gateway smoke 也已有 Ack+terminal+quiescence+REST flat 证据。
@@ -65,8 +65,9 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `bitget_lead_lag_top20_highspeed_20260715T154837Z` 已完成 20-symbol、fanout=1、10 小时真实订单运行：644 个 signal、
   211 个 submitted order、21 个 closed position，quiescence/final flat 通过；实际净 PnL `-0.03536520 USDT`。原始 report
   已按 2026-07-21 的历史报告与 bin 数据清理要求删除，当前摘要和边界只保留在 `docs/bitget_trading.md`。
-- Bitget V1 已选择 strict stop-and-flat，不修改跨进程 `local_order_id/clientOid`：不恢复交易、不允许 strategy-only restart；
-  LeadLag 每轮使用 manifest v2，gateway smoke 使用专用 manifest v1；两者都使用 run-specific SHM 并绑定 PID/start-time/config/account，
+- Bitget V1 已选择 strict stop-and-flat，不恢复交易、不允许 strategy-only restart。普通订单现使用固定 29 字符
+  `a1` `clientOid` 和 fresh 60-bit run namespace；LeadLag 每轮使用 manifest v3，gateway smoke 使用专用 manifest v2，
+  两者都 attestation 全部 run-scoped OrderSession/feedback config 的 namespace 与 SHA-256，并使用 run-specific SHM、绑定 PID/start-time/config/account。
   gateway smoke 额外绑定 data session、拒绝已存在的 run directory，并校验 runner CSV/summary。交易 runner 退出后先停止所有绑定
   producer，再通过完整分页的 REST 双订单 snapshot、范围撤单和 reduce-only 平仓证明 flat。Helper/guard/isolation 已有自动测试；
   `BTCUSDT` read-only baseline、emergency dry-run、flat-account helper、修复后的 tiny-position stop-and-flat 和 fanout=1 gateway
@@ -80,7 +81,7 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `config/strategies/lead_lag_bitget_requested_top30_highspeed_fanout4_20260716.toml`。2026-07-16 官方快照中 30/30 双边均存在；
   11 个原先缺失的 symbol 已补入大 universe catalog。`SKHY/SNDK/SKHYNIX/SOXL/MU/KORU/SAMSUNG/DRAM/MRVL/EWY`
   是 Binance `TRADIFI_PERPETUAL`，真实启动前必须重新确认交易时段和双边 BBO；当前只有 catalog/config、只读行情连接和
-  manifest v2 prepare/validate-only 证据，没有该 30-symbol 组合的真实订单证据。
+  历史 manifest v2 prepare/validate-only 证据；任何后续 run 必须重新生成 manifest v3，没有该 30-symbol 组合的真实订单证据。
 - 30-symbol fanout=1 14 小时 BBO recorder live run
   `bitget_lead_lag_requested_top30_fanout1_14h_bbo_20260716T113602Z` 已于 2026-07-17 01:43:50Z 正常结束；guard 为
   `normal_exit_flat`，绑定进程 quiescence 为 stopped，final REST 无 open orders/positions，后续只读复核仍为进程 absent 和 flat。
@@ -101,7 +102,23 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
 - Gate OBU/OrderBook 只完成讨论、quick probe，以及未被 producer/consumer 使用的 `Orderbook<Level>` 类型草案；尚未实现
   decoder/local book/depth typed channel，该草案也不是已批准的 published ABI 或 persistent format。继续实现前仍需决定命名、
   count 类型、`symbol_id`/`exchange` 和存储布局。
-- `FixedOrderedSlotPool` 已提供通用容器，但生产 LeadLag multi-group metadata 迁移仍按专题文档和独立分支事实确认，不能假设完成。
+- PR #13（`feature/lead-lag-parallel-fixed-slot-v4`）已把 `main@87bdc08` 合入该 feature branch，并完成
+  LeadLag multi-group 基础设施离线 merge gate；PR 尚未合并进 main。每个 pair 使用
+  `FixedOrderedSlotPool<ExecutionGroup, 16>`；slot payload 在 Strategy 初始化时按 effective
+  `execute.parallel` 一次性分配，`parallel>16` warning 后 clamp 为 `16`，`parallel=0` 仍无效；
+  `(symbol_id, group_id)` 是稳定 identity，`group_index` 仅用于策略进程内 O(1) slot 定位且不进入
+  SHM/log/CSV。terminal metadata mismatch 禁止扫描 fallback，会使 pair 进入
+  `needs_reconcile` 并暂停新开仓，同时保留已有持仓的 close / stoploss 路径。LeadLag order log、`order_detail.csv` 和
+  `latency.csv` 已迁移到 `group_id` / `submitted_v2`。`parallel=1/2/4/8/16` synthetic replay、
+  同时间窗 788 万条 Binance+Bitget 行情 replay、Debug/Release/ASAN/SHM 测试和 production-like A/B
+  benchmark 已通过；candidate/baseline 全量 build 均被既有缺失
+  `third_party/websocket/websocket.h` 阻断。2026-07-23/24 P8 真实订单达到
+  `active_groups=8`，但暴露跨 run `clientOid` 复用、8 个订单长期无 Ack/terminal、INTC slots/残仓卡住、
+  watchdog 漏报和人工 `SIGTERM` 未触发 guard cleanup；最终由手工 emergency helper
+  `verified_flat`。P8-01 已以固定 wire namespace、回报隔离、manifest/config attestation 和 fresh 非实盘证据关闭；
+  P8-02..P8-08 仍未关闭。现有 checked-in live config 仍全部为 `parallel=1`，其余阻断关闭前不得再次启动
+  `parallel>1` 真实订单，用户也未批准合并该分支；PR #11 后续需按新 schema 单独升级。完整 contract、
+  incident、问题清单、证据路径和验收条件见 `docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。
 - 当前机器默认 `0-15` live reserved、`16-31` test/diagnostics/benchmark；kernel isolation/IRQ 调优仍是候选方案。
 - Gate/Bitget 交易链路 L3 性能优化已完成原暂停点的 Gate 第 5 组、Bitget、
   parser → SHM → runtime、测试、replay 和 review，并累计接受 10 项生产优化。最新
@@ -117,8 +134,8 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   decision-to-request P50/P95 分别由 `4.939/6.915us` 降至 `4.285/5.917us`，5/5 同向；两类
   global-risk prefetch 均回退并已撤销。完整证据与边界见 `docs/lead_lag_latency_analysis.md`。
 - 2026-07-21 已从 canonical main 和注册 worktree 之外的本地目录清理 2026-07-17 前的历史 report 与生成型 bin，main 合并提交为
-  `13a964b`；磁盘约释放 `198.03 GB`。25 个旧分支 worktree 仍按各自 HEAD 保留约 `4.35 GB` 的受控历史副本，其中存在 dirty
-  和 detached worktree，未擅自修改；如需物理删除，必须先决定逐分支同步、稀疏 checkout 或移除废弃 worktree。S3 未做历史清理。
+  `13a964b`；磁盘约释放 `198.03 GB`。注册 worktree 的数量、branch、dirty/ahead 状态和删除判断只信实时
+  `git worktree list`、各 worktree `git status`，不继续使用旧的 25-worktree/4.35 GB 摘要；不得直接批量 `rm`。S3 未做历史清理。
 
 ## 代码入口
 
@@ -172,8 +189,9 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 下一步建议
 
-1. Bitget trading：fanout=1 gateway、20-symbol 与 combined 46-symbol signal-conditioned LeadLag 已有 live 证据；下一门是按当次授权执行 fanout=4 staged
-   LeadLag，先验证四 route ready、每 child 最小量、Ack/terminal 归组、reduce-only 收敛、quiescence 和 final flat。每轮必须
+1. Bitget trading：fanout=1 gateway、20-symbol 与 combined 46-symbol signal-conditioned LeadLag 已有 live 证据；fanout=4 staged
+   LeadLag 当前被 P8-02..P8-08 阻断，不是下一项可执行动作。未来解除阻断并取得当次授权后，仍需验证四 route ready、
+   每 child 最小量、Ack/terminal 归组、reduce-only 收敛、quiescence 和 final flat。每轮必须
    fresh run；本地 account limiter 明确不在 main，未经用户单独授权不要重新加入；failover、fast-fill 交易状态合并和
    resume/persistent ID 仍未完成。`fast-fill` 当前仅作诊断，不能参与 feedback 或交易状态。Bitget report 工具已在 main；
    继续修改平仓或 drift guard 前先 review PR #10，再决定后续策略实验入口。
@@ -184,8 +202,13 @@ rg 'aquila_evaluation' core exchange tools
    单边 stale BBO。
 4. Fillability：普通 BTC touch probe 的 99% 不能外推到 signal-conditioned LeadLag；按 fillability 文档的 row/group、BBO stage 和
    lifecycle 口径复查。
-5. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
-6. 性能/CPU：numeric request 专用 worktree 已完成 local ID、final JSON writer 和
+5. LeadLag parallel fixed-slot：按专题文档的 `P8-01 → P8-02/P8-03 → P8-04/P8-05 → P8-06 →
+   P8-07/P8-08 → P8-10 → P8-09` 顺序关闭 2026-07-23/24 P8 incident；P8-01 已关闭，下一项是
+   P8-02/P8-03 gateway aging/UnknownResult，再处理 strategy handoff、guard signal cleanup 和监控。
+   P8-02..P8-08 关闭并取得 fresh 非实盘证据前，不合并 PR #13、不再次启动 `parallel>1` 真实订单，
+   checked-in live config 保持 `parallel=1`。
+6. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
+7. 性能/CPU：numeric request 专用 worktree 已完成 local ID、final JSON writer 和
    decimal writer 的后续非拓扑筛选，候选均因完整链或相邻路径回退而撤销。下一阶段从
    已接受 clean HEAD 新建独立 topology branch/worktree，先读
    `docs/runtime_cpu_allocation.md`，冻结 Gate/Bitget submit、ACK、feedback runtime
@@ -215,13 +238,23 @@ authoritative feedback；当前 main 不含本地 account limiter，未经用户
 不得把 fresh-run 解释为 resume，也不得在同一 run 重启 strategy。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
 
+LeadLag `parallel > 1` 基础设施在 PR #13（`feature/lead-lag-parallel-fixed-slot-v4`）：fixed slot 上限 16、稳定
+`(symbol_id, group_id)`、runtime-local `group_index`、SHM v4、mismatch reconcile 和 `submitted_v2`
+report schema 已实现。分支已同步 `main@87bdc08`，并完成 synthetic/真实双侧行情离线 replay、focused
+Debug/Release/ASAN/SHM tests 和 production-like A/B benchmark；详细结果和本地证据路径只维护在
+`docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。2026-07-23/24 P8 live 达到容量 8，但因跨 run
+`clientOid` 复用、8 个 unresolved orders、INTC 残仓、watchdog 漏报和 guard `SIGTERM` cleanup 失效，
+最终依靠手工 emergency helper 才 `verified_flat`。P8-01 已在本分支以固定
+`a1-<12 Base32>-<13 Base36>`、fresh namespace、manifest v3/config SHA-256 attestation 和回报隔离关闭；
+下一项按专题文档讨论 P8-02/P8-03。P8-02..P8-08 关闭前不要合并 PR #13，也不要再次启动
+`parallel>1` 真实订单。
+
 LeadLag cold submit 的 PR #14 / #15 已合入 main。PR #15 只保留已通过五组 paired endpoint A/B 的成功
 `lead_lag_order_intent` 删除；两类 global-risk prefetch 均已证明回退并撤销。继续性能工作先读
 `docs/lead_lag_latency_analysis.md`，不要重复加入这两个候选。
 
-2026-07-17 前的旧 report/bin 已从 canonical main 和注册 worktree 之外清理；25 个旧分支 worktree 仍有约 `4.35 GB` 的
-Git 受控副本。删除这些副本会改变 dirty/detached 开发状态，必须先由用户选择同步分支、稀疏 checkout 或移除废弃 worktree；
-不要直接批量 `rm`。
+2026-07-17 前的旧 report/bin 已从 canonical main 和注册 worktree 之外清理。worktree/branch 删除判断只信实时状态，
+不得直接批量 `rm`。
 
 若继续当前 Gate/Bitget 交易链路性能优化，不要从 `/home/liuxiang/dev/aquila` 的 `main`
 重开实现；进入

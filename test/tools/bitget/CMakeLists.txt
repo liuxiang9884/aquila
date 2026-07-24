@@ -83,9 +83,13 @@ add_test(NAME bitget_order_session_rtt_probe_preflight_test
 
 set_tests_properties(bitget_order_session_rtt_probe_help_test
     bitget_order_session_rtt_probe_dry_run_test
-    bitget_order_session_rtt_probe_preflight_test
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+set_tests_properties(bitget_order_session_rtt_probe_preflight_test
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+        WILL_FAIL TRUE)
 
 add_test(NAME bitget_data_fusion_help_test
          COMMAND bitget_data_fusion --help)

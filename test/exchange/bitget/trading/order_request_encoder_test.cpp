@@ -9,6 +9,10 @@
 namespace aquila::bitget {
 namespace {
 
+ClientOidRunNamespace RunNamespace() {
+  return ClientOidRunNamespace::Parse("0123456789AB").value();
+}
+
 core::OrderPlaceRequest MakePlaceRequest(
     std::uint64_t local_order_id, OrderType order_type, std::string_view symbol,
     double quantity, std::uint8_t quantity_decimal_places, double price,
@@ -61,13 +65,13 @@ TEST(BitgetOrderRequestEncoderTest, PlaceLimitIocBuyWritesExactJson) {
       MakePlaceRequest(9, OrderType::kLimit, "BTCUSDT", 0.001, 3, 100000.0, 1,
                        OrderSide::kBuy, TimeInForce::kImmediateOrCancel, false);
 
-  const EncodedTextRequest encoded =
-      EncodePlaceOrderRequest(request, 144115188075855873ULL, buffer);
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+      request, RunNamespace(), 144115188075855873ULL, buffer);
 
   ASSERT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_EQ(
       encoded.text,
-      R"({"op":"trade","id":"144115188075855873","category":"usdt-futures","topic":"place-order","args":[{"symbol":"BTCUSDT","orderType":"limit","qty":"0.001","price":"100000.0","side":"buy","timeInForce":"ioc","reduceOnly":"NO","marginMode":"crossed","clientOid":"a-9"}]})");
+      R"({"op":"trade","id":"144115188075855873","category":"usdt-futures","topic":"place-order","args":[{"symbol":"BTCUSDT","orderType":"limit","qty":"0.001","price":"100000.0","side":"buy","timeInForce":"ioc","reduceOnly":"NO","marginMode":"crossed","clientOid":"a1-0123456789AB-0000000000009"}]})");
 }
 
 TEST(BitgetOrderRequestEncoderTest, PlaceLimitGtcSellReduceOnlyWritesTokens) {
@@ -76,8 +80,8 @@ TEST(BitgetOrderRequestEncoderTest, PlaceLimitGtcSellReduceOnlyWritesTokens) {
       MakePlaceRequest(10, OrderType::kLimit, "ETHUSDT", 1.25, 2, 3200.5, 1,
                        OrderSide::kSell, TimeInForce::kGoodTillCancel, true);
 
-  const EncodedTextRequest encoded =
-      EncodePlaceOrderRequest(request, 144115188075855874ULL, buffer);
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+      request, RunNamespace(), 144115188075855874ULL, buffer);
 
   ASSERT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_NE(encoded.text.find(R"("side":"sell")"), std::string_view::npos);
@@ -91,25 +95,25 @@ TEST(BitgetOrderRequestEncoderTest, CancelWritesOrderIdAndClientOid) {
   const core::OrderCancelRequest request{.local_order_id = 11};
 
   const EncodedTextRequest encoded = EncodeCancelOrderRequest(
-      request, 123456789, 216172782113783810ULL, buffer);
+      request, RunNamespace(), 123456789, 216172782113783810ULL, buffer);
 
   ASSERT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_EQ(
       encoded.text,
-      R"({"op":"trade","id":"216172782113783810","category":"usdt-futures","topic":"cancel-order","args":[{"orderId":"123456789","clientOid":"a-11"}]})");
+      R"({"op":"trade","id":"216172782113783810","category":"usdt-futures","topic":"cancel-order","args":[{"orderId":"123456789","clientOid":"a1-0123456789AB-000000000000B"}]})");
 }
 
 TEST(BitgetOrderRequestEncoderTest, CancelFallbackUsesOnlyClientOid) {
   std::array<char, kCancelOrderRequestBufferSize> buffer{};
   const core::OrderCancelRequest request{.local_order_id = 12};
 
-  const EncodedTextRequest encoded =
-      EncodeCancelOrderRequest(request, 0, 216172782113783811ULL, buffer);
+  const EncodedTextRequest encoded = EncodeCancelOrderRequest(
+      request, RunNamespace(), 0, 216172782113783811ULL, buffer);
 
   ASSERT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_EQ(
       encoded.text,
-      R"({"op":"trade","id":"216172782113783811","category":"usdt-futures","topic":"cancel-order","args":[{"clientOid":"a-12"}]})");
+      R"({"op":"trade","id":"216172782113783811","category":"usdt-futures","topic":"cancel-order","args":[{"clientOid":"a1-0123456789AB-000000000000C"}]})");
 }
 
 TEST(BitgetOrderRequestEncoderTest, RejectsUnsupportedOrMissingPlaceFields) {
@@ -118,27 +122,37 @@ TEST(BitgetOrderRequestEncoderTest, RejectsUnsupportedOrMissingPlaceFields) {
       MakePlaceRequest(1, OrderType::kMarket, "BTCUSDT", 1.0, 0, 1.0, 0,
                        OrderSide::kBuy, TimeInForce::kGoodTillCancel, false);
 
-  EXPECT_EQ(EncodePlaceOrderRequest(request, 1, buffer).status,
+  EXPECT_EQ(EncodePlaceOrderRequest(request, RunNamespace(), 1, buffer).status,
             OrderEncodeStatus::kUnsupportedOrderType);
   request.order_type = OrderType::kLimit;
   request.symbol_size = 0;
-  EXPECT_EQ(EncodePlaceOrderRequest(request, 1, buffer).status,
+  EXPECT_EQ(EncodePlaceOrderRequest(request, RunNamespace(), 1, buffer).status,
             OrderEncodeStatus::kInvalidSymbol);
 }
 
 TEST(BitgetOrderRequestEncoderTest, RejectsInvalidLocalIdAndSmallBuffer) {
   std::array<char, kCancelOrderRequestBufferSize> cancel_buffer{};
   const core::OrderCancelRequest cancel_request{};
-  EXPECT_EQ(
-      EncodeCancelOrderRequest(cancel_request, 0, 1, cancel_buffer).status,
-      OrderEncodeStatus::kInvalidClientOid);
+  EXPECT_EQ(EncodeCancelOrderRequest(cancel_request, RunNamespace(), 0, 1,
+                                     cancel_buffer)
+                .status,
+            OrderEncodeStatus::kInvalidClientOid);
 
   std::array<char, 8> small_buffer{};
   const core::OrderPlaceRequest place_request =
       MakePlaceRequest(1, OrderType::kLimit, "BTCUSDT", 1.0, 0, 1.0, 0,
                        OrderSide::kBuy, TimeInForce::kGoodTillCancel, false);
-  EXPECT_EQ(EncodePlaceOrderRequest(place_request, 1, small_buffer).status,
-            OrderEncodeStatus::kBufferTooSmall);
+  EXPECT_EQ(
+      EncodePlaceOrderRequest(place_request, RunNamespace(), 1, small_buffer)
+          .status,
+      OrderEncodeStatus::kBufferTooSmall);
+
+  const ClientOidRunNamespace reserved_namespace =
+      ClientOidRunNamespace::Parse("000000000000").value();
+  EXPECT_EQ(EncodePlaceOrderRequest(place_request, reserved_namespace, 1,
+                                    cancel_buffer)
+                .status,
+            OrderEncodeStatus::kInvalidClientOid);
 }
 
 TEST(BitgetOrderRequestEncoderTest, MaximumBoundedPlaceFieldsFitDirectBuffer) {
@@ -149,7 +163,8 @@ TEST(BitgetOrderRequestEncoderTest, MaximumBoundedPlaceFieldsFitDirectBuffer) {
       OrderSide::kSell, TimeInForce::kImmediateOrCancel, true);
 
   const EncodedTextRequest encoded = EncodePlaceOrderRequest(
-      request, std::numeric_limits<std::uint64_t>::max(), buffer);
+      request, RunNamespace(), std::numeric_limits<std::uint64_t>::max(),
+      buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_LT(encoded.text.size(), buffer.size());

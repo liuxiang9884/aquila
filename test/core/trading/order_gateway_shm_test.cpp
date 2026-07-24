@@ -53,7 +53,7 @@ OrderGatewayShmConfig MakeOpenConfig(
 OrderGatewayCommand MakeCommand(std::uint64_t command_seq) {
   OrderGatewayCommand command{};
   command.command_seq = command_seq;
-  command.payload.place.parent_id = 1000 + command_seq;
+  command.payload.place.group_id = 3000 + command_seq;
   command.payload.place.local_order_id = 2000 + command_seq;
   command.payload.place.gateway_route_id = 2;
   command.kind = OrderGatewayCommandKind::kPlace;
@@ -66,6 +66,7 @@ OrderGatewayEvent MakeEvent(std::uint64_t event_seq) {
   OrderGatewayEvent event{};
   event.event_seq = event_seq;
   event.command_seq = 7000 + event_seq;
+  event.group_id = 7500 + event_seq;
   event.local_order_id = 8000 + event_seq;
   event.route_id = 3;
   event.kind = OrderGatewayEventKind::kOrderResponse;
@@ -199,12 +200,70 @@ TEST(OrderGatewayShmTest, CommandQueuePushPopOneCommand) {
   OrderGatewayCommand actual{};
   ASSERT_TRUE(create_result.value.CommandQueue(2).TryPop(&actual));
   EXPECT_EQ(actual.command_seq, expected.command_seq);
-  EXPECT_EQ(actual.payload.place.parent_id, expected.payload.place.parent_id);
+  EXPECT_EQ(actual.payload.place.group_id, expected.payload.place.group_id);
   EXPECT_EQ(actual.payload.place.local_order_id,
             expected.payload.place.local_order_id);
   EXPECT_EQ(actual.payload.place.gateway_route_id,
             expected.payload.place.gateway_route_id);
   EXPECT_FALSE(create_result.value.CommandQueue(2).TryPop(&actual));
+}
+
+TEST(OrderGatewayShmTest, MultiGroupPlaceAndCancelCommandsKeepIdentity) {
+  const OrderGatewayShmConfig config = MakeCreateConfig("multi_group_commands");
+  ShmCleanup cleanup(config.shm_name);
+
+  auto create_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(create_result.ok) << create_result.error;
+  auto queue = create_result.value.CommandQueue(2);
+
+  OrderGatewayCommand place_a = MakeCommand(41);
+  place_a.payload.place.group_id = 701;
+  place_a.payload.place.local_order_id = 1001;
+  OrderGatewayCommand place_b = MakeCommand(42);
+  place_b.payload.place.group_id = 702;
+  place_b.payload.place.local_order_id = 1002;
+  OrderGatewayCommand cancel_b{};
+  cancel_b.kind = OrderGatewayCommandKind::kCancel;
+  cancel_b.command_seq = 43;
+  cancel_b.payload.cancel = OrderCancelRequest{
+      .local_order_id = 1002,
+      .group_id = 702,
+      .gateway_route_id = 2,
+  };
+  OrderGatewayCommand cancel_a{};
+  cancel_a.kind = OrderGatewayCommandKind::kCancel;
+  cancel_a.command_seq = 44;
+  cancel_a.payload.cancel = OrderCancelRequest{
+      .local_order_id = 1001,
+      .group_id = 701,
+      .gateway_route_id = 2,
+  };
+
+  ASSERT_TRUE(queue.TryPush(place_a));
+  ASSERT_TRUE(queue.TryPush(place_b));
+  ASSERT_TRUE(queue.TryPush(cancel_b));
+  ASSERT_TRUE(queue.TryPush(cancel_a));
+
+  OrderGatewayCommand actual{};
+  ASSERT_TRUE(queue.TryPop(&actual));
+  EXPECT_EQ(actual.command_seq, 41U);
+  EXPECT_EQ(actual.payload.place.local_order_id, 1001U);
+  EXPECT_EQ(actual.payload.place.group_id, 701U);
+  ASSERT_TRUE(queue.TryPop(&actual));
+  EXPECT_EQ(actual.command_seq, 42U);
+  EXPECT_EQ(actual.payload.place.local_order_id, 1002U);
+  EXPECT_EQ(actual.payload.place.group_id, 702U);
+  ASSERT_TRUE(queue.TryPop(&actual));
+  EXPECT_EQ(actual.command_seq, 43U);
+  EXPECT_EQ(actual.payload.cancel.local_order_id, 1002U);
+  EXPECT_EQ(actual.payload.cancel.group_id, 702U);
+  EXPECT_EQ(actual.payload.cancel.gateway_route_id, 2U);
+  ASSERT_TRUE(queue.TryPop(&actual));
+  EXPECT_EQ(actual.command_seq, 44U);
+  EXPECT_EQ(actual.payload.cancel.local_order_id, 1001U);
+  EXPECT_EQ(actual.payload.cancel.group_id, 701U);
+  EXPECT_EQ(actual.payload.cancel.gateway_route_id, 2U);
+  EXPECT_FALSE(queue.TryPop(&actual));
 }
 
 TEST(OrderGatewayShmTest, EventQueuePushPopOneEvent) {

@@ -154,7 +154,7 @@ namespace detail {
 struct OrderRequestCorrelation {
   OrderRequestType type{OrderRequestType::kUnknown};
   std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint64_t expected_exchange_order_id{0};
   std::int64_t request_send_realtime_ns{0};
   std::int64_t request_send_monotonic_ns{0};
@@ -179,11 +179,13 @@ class OrderSession {
 
   OrderSession(
       websocket::ConnectionConfig config, LoginCredentials credentials,
+      ClientOidRunNamespace client_oid_run_namespace,
       ResponseHandler& response_handler,
       std::size_t request_map_capacity = kDefaultOrderRequestMapCapacity,
       std::size_t order_id_cache_capacity = kDefaultOrderIdCacheCapacity)
       : connection_(ApplyOptions(std::move(config))),
         credentials_(std::move(credentials)),
+        client_oid_run_namespace_(client_oid_run_namespace),
         response_handler_(response_handler),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(connection_, message_handler_),
@@ -298,8 +300,8 @@ class OrderSession {
     const std::uint64_t encoded_request_id =
         RequestIdCodec::Encode(OrderRequestType::kPlaceOrder, sequence);
     std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-    const EncodedTextRequest encoded =
-        EncodePlaceOrderRequest(request, encoded_request_id, buffer);
+    const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+        request, client_oid_run_namespace_, encoded_request_id, buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       return SendFailure(MapEncodeStatus(encoded.status), sequence,
                          encoded_request_id);
@@ -348,8 +350,9 @@ class OrderSession {
         RequestIdCodec::Encode(OrderRequestType::kCancelOrder, sequence);
     const std::uint64_t exchange_order_id = ExchangeOrderIdForCancel(request);
     std::array<char, kCancelOrderRequestBufferSize> buffer{};
-    const EncodedTextRequest encoded = EncodeCancelOrderRequest(
-        request, exchange_order_id, encoded_request_id, buffer);
+    const EncodedTextRequest encoded =
+        EncodeCancelOrderRequest(request, client_oid_run_namespace_,
+                                 exchange_order_id, encoded_request_id, buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       return SendFailure(MapEncodeStatus(encoded.status), sequence,
                          encoded_request_id);
@@ -696,6 +699,7 @@ class OrderSession {
     }
     if (parsed.kind == OperationResponseKind::kAck &&
         (!parsed.client_oid.ok ||
+         parsed.client_oid.run_namespace != client_oid_run_namespace_ ||
          parsed.client_oid.local_order_id != correlation.local_order_id)) {
       RecordCorrelationMismatch();
       return websocket::DeliveryResult::kAccepted;
@@ -731,7 +735,7 @@ class OrderSession {
         .kind = MapResponseKind(parsed.kind),
         .request_type = correlation.type,
         .local_order_id = correlation.local_order_id,
-        .parent_id = correlation.parent_id,
+        .group_id = correlation.group_id,
         .exchange_order_id = parsed.exchange_order_id,
         .request_sequence = parsed.request_id.sequence,
         .route_id = correlation.route_id,
@@ -747,7 +751,11 @@ class OrderSession {
 #if defined(AQUILA_BITGET_ORDER_SESSION_ENABLE_TEST_HOOKS)
     last_order_timing_diagnostic_ = timing;
 #endif
-    LogOrderResponse(response, timing);
+    std::array<char, ClientOidCodec::kEncodedSize> client_oid_buffer{};
+    const std::string_view client_oid =
+        ClientOidCodec::Format(client_oid_run_namespace_,
+                               correlation.local_order_id, client_oid_buffer);
+    LogOrderResponse(response, timing, client_oid);
     response_handler_.OnOrderResponse(response);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordResponse();
@@ -852,25 +860,32 @@ class OrderSession {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
+    std::array<char, ClientOidCodec::kEncodedSize> client_oid_buffer{};
+    const std::string_view client_oid = ClientOidCodec::Format(
+        client_oid_run_namespace_, local_order_id, client_oid_buffer);
     NOVA_INFO(
         "bitget_order_send request_type={} request_sequence={} "
-        "local_order_id={} request_send_local_ns={} "
+        "client_oid={} local_order_id={} group_id={} route_id={} "
+        "request_send_local_ns={} "
         "request_send_monotonic_ns={} order_encode_done_realtime_ns={} "
         "inflight={}",
-        magic_enum::enum_name(request_type), request_sequence, local_order_id,
+        magic_enum::enum_name(request_type), request_sequence, client_oid,
+        local_order_id, correlation.group_id, correlation.route_id,
         correlation.request_send_realtime_ns,
         correlation.request_send_monotonic_ns,
         correlation.write_path.order_encode_done_ns, inflight_count());
   }
 
   static void LogOrderResponse(const OrderResponse& response,
-                               const OrderTimingDiagnostic& timing) noexcept {
+                               const OrderTimingDiagnostic& timing,
+                               std::string_view client_oid) noexcept {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
     NOVA_INFO(
         "bitget_order_response response_kind={} request_type={} "
-        "request_sequence={} local_order_id={} exchange_order_id={} "
+        "request_sequence={} client_oid={} local_order_id={} group_id={} "
+        "route_id={} exchange_order_id={} "
         "error_code={} request_send_local_ns={} local_receive_ns={} "
         "exchange_ns={} ack_rtt_ns={} connection_id_hash={} "
         "request_send_realtime_ns={} request_send_monotonic_ns={} "
@@ -880,14 +895,14 @@ class OrderSession {
         "place_creation_time_ms={} exchange_message_time_ms={}",
         magic_enum::enum_name(response.kind),
         magic_enum::enum_name(response.request_type), response.request_sequence,
-        response.local_order_id, response.exchange_order_id,
-        response.error_code, response.request_send_local_ns,
-        response.local_receive_ns, response.exchange_ns, response.ack_rtt_ns,
-        response.connection_id_hash, timing.request_send_realtime_ns,
-        timing.request_send_monotonic_ns, timing.write_complete_realtime_ns,
-        timing.write_complete_monotonic_ns, timing.ack_receive_realtime_ns,
-        timing.ack_receive_monotonic_ns, timing.ack_rtt_monotonic_ns,
-        timing.write_complete_to_ack_monotonic_ns,
+        client_oid, response.local_order_id, response.group_id,
+        response.route_id, response.exchange_order_id, response.error_code,
+        response.request_send_local_ns, response.local_receive_ns,
+        response.exchange_ns, response.ack_rtt_ns, response.connection_id_hash,
+        timing.request_send_realtime_ns, timing.request_send_monotonic_ns,
+        timing.write_complete_realtime_ns, timing.write_complete_monotonic_ns,
+        timing.ack_receive_realtime_ns, timing.ack_receive_monotonic_ns,
+        timing.ack_rtt_monotonic_ns, timing.write_complete_to_ack_monotonic_ns,
         timing.place_creation_time_ms, timing.exchange_message_time_ms);
   }
 
@@ -984,7 +999,7 @@ class OrderSession {
       std::uint64_t expected_exchange_order_id) noexcept {
     return {.type = type,
             .local_order_id = request.local_order_id,
-            .parent_id = request.parent_id,
+            .group_id = request.group_id,
             .expected_exchange_order_id = expected_exchange_order_id,
             .route_id = request.gateway_route_id};
   }
@@ -998,6 +1013,7 @@ class OrderSession {
 
   websocket::ConnectionConfig connection_;
   LoginCredentials credentials_;
+  ClientOidRunNamespace client_oid_run_namespace_;
   ResponseHandler& response_handler_;
   MessageHandler message_handler_;
   Client client_;

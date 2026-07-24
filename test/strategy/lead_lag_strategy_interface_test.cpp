@@ -543,7 +543,7 @@ struct FakeOrderSession {
 
   struct CapturedOrder {
     std::uint64_t local_order_id{0};
-    std::uint64_t parent_id{0};
+    std::uint64_t group_id{0};
     aquila::Exchange exchange{aquila::Exchange::kGate};
     std::int32_t symbol_id{0};
     std::string symbol;
@@ -562,7 +562,7 @@ struct FakeOrderSession {
       const aquila::core::OrderPlaceRequest& request) noexcept {
     placed_orders.push_back(CapturedOrder{
         .local_order_id = request.local_order_id,
-        .parent_id = request.parent_id,
+        .group_id = request.group_id,
         .exchange = request.exchange,
         .symbol_id = request.symbol_id,
         .symbol = std::string(request.SymbolView()),
@@ -1003,6 +1003,22 @@ TEST(LeadLagStrategyInterfaceTest, RuntimeCanDispatchHooks) {
   });
 }
 
+TEST(LeadLagStrategyInterfaceTest,
+     RuntimeClampsProgrammaticParallelAboveCapacity) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.parallel = 17;
+
+  leadlag::Strategy strategy{config};
+
+  EXPECT_FALSE(strategy.ShouldStop());
+  ASSERT_EQ(strategy.config().pairs.size(), 1U);
+  EXPECT_EQ(strategy.config().pairs[0].execute.parallel,
+            leadlag::kMaxLeadLagExecutionGroups);
+  EXPECT_EQ(strategy.OrderRiskSlotCountForTest(),
+            static_cast<std::size_t>(leadlag::kMaxLeadLagExecutionGroups) *
+                leadlag::kMaxExecutionGroupPendingOrders);
+}
+
 TEST(LeadLagStrategyInterfaceTest, StoresRawMarketUpdates) {
   leadlag::Strategy strategy{OnePairConfig()};
   FakeOrderSession order_session;
@@ -1118,6 +1134,12 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_DOUBLE_EQ(order.price, 102.1);
   EXPECT_EQ(order.price_decimal_places, 1);
   EXPECT_EQ(order.quantity, 9);
+  EXPECT_NE(order.group_id, 0U);
+  const aquila::core::StrategyOrder* stored_order =
+      order_manager.FindOrder(order.local_order_id);
+  ASSERT_NE(stored_order, nullptr);
+  EXPECT_EQ(stored_order->place_request.group_id, order.group_id);
+  EXPECT_NE(stored_order->group_index, aquila::core::kInvalidOrderGroupIndex);
 
   const leadlag::SignalDecision& decision = strategy.last_signal_decision();
   ASSERT_TRUE(decision.triggered);
@@ -1138,14 +1160,14 @@ TEST(LeadLagStrategyInterfaceTest,
   FeedOpenLongSignal(&strategy, &context);
 
   ASSERT_EQ(order_session.placed_orders.size(), 4U);
-  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
-  ASSERT_NE(parent_id, 0U);
+  const std::uint64_t group_id = order_session.placed_orders[0].group_id;
+  ASSERT_NE(group_id, 0U);
   std::vector<std::uint64_t> local_order_ids;
   for (std::size_t i = 0; i < order_session.placed_orders.size(); ++i) {
     const FakeOrderSession::CapturedOrder& order =
         order_session.placed_orders[i];
     local_order_ids.push_back(order.local_order_id);
-    EXPECT_EQ(order.parent_id, parent_id);
+    EXPECT_EQ(order.group_id, group_id);
     EXPECT_EQ(order.gateway_route_id, i);
     EXPECT_EQ(order.side, aquila::OrderSide::kBuy);
     EXPECT_FALSE(order.reduce_only);
@@ -1160,7 +1182,134 @@ TEST(LeadLagStrategyInterfaceTest,
 }
 
 TEST(LeadLagStrategyInterfaceTest,
-     ExternalModeParentIdIsGloballyUniqueAcrossSymbols) {
+     GroupIdentityMismatchPausesEntriesAndPreservesExecutionGroup) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.parallel = 2;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t local_order_id =
+      order_session.placed_orders[0].local_order_id;
+  aquila::core::StrategyOrder* order = order_manager.FindOrder(local_order_id);
+  ASSERT_NE(order, nullptr);
+  ASSERT_NE(order->group_index, aquila::core::kInvalidOrderGroupIndex);
+  ++order->place_request.group_id;
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(local_order_id, 1, 102.1));
+
+  EXPECT_TRUE(strategy.degraded());
+  EXPECT_TRUE(strategy.needs_reconcile());
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 201, 105.0, 106.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 202, 170.0, 171.0), context);
+  EXPECT_EQ(order_session.placed_orders.size(), 1U);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kDegraded);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ParallelGroupsKeepDistinctMetadataAndApplyFeedbackIndependently) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.parallel = 2;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 102, 105.0, 106.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 103, 170.0, 171.0), context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const std::uint64_t first_local_order_id =
+      order_session.placed_orders[0].local_order_id;
+  const std::uint64_t second_local_order_id =
+      order_session.placed_orders[1].local_order_id;
+  const aquila::core::StrategyOrder* first =
+      order_manager.FindOrder(first_local_order_id);
+  const aquila::core::StrategyOrder* second =
+      order_manager.FindOrder(second_local_order_id);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  EXPECT_NE(first->place_request.group_id, second->place_request.group_id);
+  EXPECT_NE(first->group_index, second->group_index);
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(second_local_order_id, 0, 9, 0.0));
+  EXPECT_EQ(order_manager.FindOrder(second_local_order_id), nullptr);
+  EXPECT_NE(order_manager.FindOrder(first_local_order_id), nullptr);
+  EXPECT_FALSE(strategy.needs_reconcile());
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(first_local_order_id, 2, 102.1));
+  EXPECT_EQ(order_manager.FindOrder(first_local_order_id), nullptr);
+  EXPECT_FALSE(strategy.needs_reconcile());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ParallelAckOrderingAndDuplicatesPreserveGroupOwnership) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.parallel = 2;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 102, 105.0, 106.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 103, 170.0, 171.0), context);
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const FakeOrderSession::CapturedOrder first = order_session.placed_orders[0];
+  const FakeOrderSession::CapturedOrder second = order_session.placed_orders[1];
+  ASSERT_NE(first.group_id, second.group_id);
+
+  const auto apply_ack = [&](std::uint64_t local_order_id) {
+    ApplyResponse(&strategy, &order_manager, &context,
+                  aquila::core::OrderResponseEvent{
+                      .kind = aquila::core::OrderResponseKind::kAck,
+                      .local_order_id = local_order_id,
+                  });
+  };
+  apply_ack(second.local_order_id);
+  apply_ack(first.local_order_id);
+  apply_ack(second.local_order_id);
+  ASSERT_NE(order_manager.FindOrder(first.local_order_id), nullptr);
+  ASSERT_NE(order_manager.FindOrder(second.local_order_id), nullptr);
+  EXPECT_EQ(
+      order_manager.FindOrder(first.local_order_id)->place_request.group_id,
+      first.group_id);
+  EXPECT_EQ(
+      order_manager.FindOrder(second.local_order_id)->place_request.group_id,
+      second.group_id);
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(second.local_order_id, 0, 9, 0.0));
+  EXPECT_EQ(order_manager.FindOrder(second.local_order_id), nullptr);
+  ASSERT_NE(order_manager.FindOrder(first.local_order_id), nullptr);
+  apply_ack(second.local_order_id);
+  EXPECT_EQ(order_manager.FindOrder(second.local_order_id), nullptr);
+  EXPECT_EQ(
+      order_manager.FindOrder(first.local_order_id)->place_request.group_id,
+      first.group_id);
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(first.local_order_id, 2, 102.1));
+  EXPECT_EQ(order_manager.FindOrder(first.local_order_id), nullptr);
+  EXPECT_FALSE(strategy.needs_reconcile());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeGroupIdIsPairLocalAcrossSymbols) {
   leadlag::Strategy strategy{TwoPairSignalOnlyConfig()};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 16, 4};
@@ -1168,17 +1317,16 @@ TEST(LeadLagStrategyInterfaceTest,
 
   FeedOpenLongSignalForSymbol(&strategy, &context, 3);
   ASSERT_EQ(order_session.placed_orders.size(), 1U);
-  const std::uint64_t first_parent_id =
-      order_session.placed_orders.back().parent_id;
-  ASSERT_NE(first_parent_id, 0U);
+  const std::uint64_t first_group_id =
+      order_session.placed_orders.back().group_id;
+  ASSERT_EQ(first_group_id, 1U);
 
   FeedOpenLongSignalForSymbol(&strategy, &context, 7);
 
   ASSERT_EQ(order_session.placed_orders.size(), 2U);
-  const std::uint64_t second_parent_id =
-      order_session.placed_orders.back().parent_id;
-  ASSERT_NE(second_parent_id, 0U);
-  EXPECT_NE(first_parent_id, second_parent_id);
+  const std::uint64_t second_group_id =
+      order_session.placed_orders.back().group_id;
+  EXPECT_EQ(second_group_id, 1U);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -1476,6 +1624,9 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_TRUE(capture.decision.triggered);
   EXPECT_EQ(capture.decision.action, leadlag::SignalAction::kOpenLong);
   EXPECT_EQ(capture.decision.reject_reason, leadlag::SignalRejectReason::kNone);
+  EXPECT_EQ(capture.decision.group_id, 0U);
+  EXPECT_EQ(capture.diagnostics.group_id, 0U);
+  EXPECT_EQ(capture.diagnostics.active_group_count, 0U);
   EXPECT_GT(capture.diagnostics.event_ns, 0);
   EXPECT_EQ(capture.diagnostics.lead_raw.id, 101);
   EXPECT_EQ(capture.diagnostics.lag.id, 100);
@@ -1720,7 +1871,7 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   const leadlag::detail::StrategyOrderSubmittedLogRecordForTest& record =
       g_order_submitted_logs[0];
   EXPECT_EQ(record.local_order_id, order.local_order_id);
-  EXPECT_EQ(record.parent_id, order.parent_id);
+  EXPECT_EQ(record.group_id, order.group_id);
   EXPECT_EQ(record.route_id, order.gateway_route_id);
   EXPECT_EQ(record.trigger_exchange, aquila::Exchange::kBinance);
   EXPECT_EQ(record.trigger_symbol_id, 3);
@@ -1791,7 +1942,7 @@ TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagBboTiming) {
   ASSERT_EQ(g_order_response_log_count, 1U);
   const auto& log = g_order_response_logs[0];
   EXPECT_EQ(log.local_order_id, local_order_id);
-  EXPECT_EQ(log.parent_id, order_session.placed_orders[0].parent_id);
+  EXPECT_EQ(log.group_id, order_session.placed_orders[0].group_id);
   EXPECT_EQ(log.route_id, order_session.placed_orders[0].gateway_route_id);
   EXPECT_EQ(log.lead_exchange_ns, TickerExchangeNs(201));
   EXPECT_EQ(log.lag_exchange_ns, TickerExchangeNs(202));
@@ -1825,7 +1976,7 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_EQ(g_order_feedback_log_count, 1U);
   const auto& feedback_log = g_order_feedback_logs[0];
   EXPECT_EQ(feedback_log.local_order_id, local_order_id);
-  EXPECT_EQ(feedback_log.parent_id, order_session.placed_orders[0].parent_id);
+  EXPECT_EQ(feedback_log.group_id, order_session.placed_orders[0].group_id);
   EXPECT_EQ(feedback_log.route_id,
             order_session.placed_orders[0].gateway_route_id);
   EXPECT_EQ(feedback_log.lead_exchange_ns, TickerExchangeNs(201));
@@ -1837,7 +1988,7 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_EQ(g_order_finished_log_count, 1U);
   const auto& finished_log = g_order_finished_logs[0];
   EXPECT_EQ(finished_log.local_order_id, local_order_id);
-  EXPECT_EQ(finished_log.parent_id, order_session.placed_orders[0].parent_id);
+  EXPECT_EQ(finished_log.group_id, order_session.placed_orders[0].group_id);
   EXPECT_EQ(finished_log.route_id,
             order_session.placed_orders[0].gateway_route_id);
   EXPECT_EQ(finished_log.lead_exchange_ns, TickerExchangeNs(201));
@@ -2049,7 +2200,7 @@ TEST(LeadLagStrategyInterfaceTest,
 
   FeedOpenLongSignal(&strategy, &context);
   ASSERT_EQ(order_session.placed_orders.size(), 4U);
-  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
+  const std::uint64_t group_id = order_session.placed_orders[0].group_id;
   const std::uint64_t first_open_order_id =
       order_session.placed_orders[0].local_order_id;
   const std::uint64_t second_open_order_id =
@@ -2075,7 +2226,7 @@ TEST(LeadLagStrategyInterfaceTest,
   for (std::size_t i = 4; i < 8; ++i) {
     const FakeOrderSession::CapturedOrder& close_order =
         order_session.placed_orders[i];
-    EXPECT_EQ(close_order.parent_id, parent_id);
+    EXPECT_EQ(close_order.group_id, group_id);
     EXPECT_EQ(close_order.gateway_route_id, i - 4);
     EXPECT_EQ(close_order.side, aquila::OrderSide::kSell);
     EXPECT_TRUE(close_order.reduce_only);
@@ -2447,7 +2598,7 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeFanoutRetriesCloseRemaining) {
 
   FeedOpenLongSignal(&strategy, &context);
   ASSERT_EQ(order_session.placed_orders.size(), 4U);
-  const std::uint64_t open_parent_id = order_session.placed_orders[0].parent_id;
+  const std::uint64_t open_group_id = order_session.placed_orders[0].group_id;
   ApplyFeedback(
       &strategy, &order_manager, &context,
       FilledFeedback(order_session.placed_orders[0].local_order_id, 7, 102.1));
@@ -2477,7 +2628,7 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeFanoutRetriesCloseRemaining) {
   for (std::size_t i = 8; i < 12; ++i) {
     const FakeOrderSession::CapturedOrder& retry_close =
         order_session.placed_orders[i];
-    EXPECT_EQ(retry_close.parent_id, open_parent_id);
+    EXPECT_EQ(retry_close.group_id, open_group_id);
     EXPECT_EQ(retry_close.gateway_route_id, i - 8);
     EXPECT_EQ(retry_close.side, aquila::OrderSide::kSell);
     EXPECT_TRUE(retry_close.reduce_only);
@@ -2527,7 +2678,7 @@ TEST(LeadLagStrategyInterfaceTest,
 
   FeedOpenLongSignal(&strategy, &context);
   ASSERT_EQ(order_session.placed_orders.size(), 4U);
-  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
+  const std::uint64_t group_id = order_session.placed_orders[0].group_id;
   ApplyFeedback(
       &strategy, &order_manager, &context,
       FilledFeedback(order_session.placed_orders[0].local_order_id, 3, 102.1));
@@ -2548,7 +2699,7 @@ TEST(LeadLagStrategyInterfaceTest,
   for (std::size_t i = 4; i < 8; ++i) {
     const FakeOrderSession::CapturedOrder& stoploss_order =
         order_session.placed_orders[i];
-    EXPECT_EQ(stoploss_order.parent_id, parent_id);
+    EXPECT_EQ(stoploss_order.group_id, group_id);
     EXPECT_EQ(stoploss_order.gateway_route_id, i - 4);
     EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kSell);
     EXPECT_TRUE(stoploss_order.reduce_only);
@@ -2568,7 +2719,7 @@ TEST(LeadLagStrategyInterfaceTest,
 
   FeedOpenLongSignal(&strategy, &context);
   ASSERT_EQ(order_session.placed_orders.size(), 2U);
-  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
+  const std::uint64_t group_id = order_session.placed_orders[0].group_id;
   const std::uint64_t first_open_order_id =
       order_session.placed_orders[0].local_order_id;
   const std::uint64_t second_open_order_id =
@@ -2589,7 +2740,7 @@ TEST(LeadLagStrategyInterfaceTest,
   for (std::size_t i = 2; i < 4; ++i) {
     const FakeOrderSession::CapturedOrder& stoploss_order =
         order_session.placed_orders[i];
-    EXPECT_EQ(stoploss_order.parent_id, parent_id);
+    EXPECT_EQ(stoploss_order.group_id, group_id);
     EXPECT_EQ(stoploss_order.gateway_route_id, i - 2);
     EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kSell);
     EXPECT_TRUE(stoploss_order.reduce_only);
@@ -3483,6 +3634,81 @@ TEST(LeadLagStrategyInterfaceTest, ReplayModeEmitsCloseSignalForSyntheticHold) {
   strategy.OnBookTicker(
       Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
 
+  EXPECT_FALSE(strategy.last_signal_diagnostics_valid());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ReplayObserverSeesAssignedGroupForAcceptedSyntheticOpen) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.parallel = 2;
+  leadlag::Strategy strategy{
+      config, leadlag::StrategyOptions{
+                  .position_accounting =
+                      leadlag::PositionAccountingMode::kSyntheticSignals,
+              }};
+  TriggeredSignalCapture capture;
+  strategy.SetTriggeredSignalObserver(&capture, CaptureTriggeredSignal);
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(capture.count, 1U);
+  ASSERT_TRUE(capture.decision.triggered);
+  EXPECT_EQ(capture.decision.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(capture.decision.group_id, 1U);
+  EXPECT_EQ(capture.diagnostics.group_id, 1U);
+  EXPECT_EQ(capture.diagnostics.active_group_count, 1U);
+  EXPECT_EQ(capture.diagnostics.position_direction,
+            leadlag::PositionDirection::kLong);
+  EXPECT_EQ(strategy.last_signal_decision().group_id, 1U);
+  EXPECT_EQ(strategy.last_signal_diagnostics().group_id, 1U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ReplayObserverKeepsGroupZeroForParallelLimitRejection) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.parallel = 2;
+  leadlag::Strategy strategy{
+      config, leadlag::StrategyOptions{
+                  .position_accounting =
+                      leadlag::PositionAccountingMode::kSyntheticSignals,
+              }};
+  TriggeredSignalCapture capture;
+  strategy.SetTriggeredSignalObserver(&capture, CaptureTriggeredSignal);
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), context);
+  ASSERT_EQ(capture.count, 1U);
+  EXPECT_EQ(capture.decision.group_id, 1U);
+  EXPECT_EQ(capture.diagnostics.active_group_count, 1U);
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 102, 105.0, 106.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 103, 170.0, 171.0), context);
+  ASSERT_EQ(capture.count, 2U);
+  EXPECT_EQ(capture.decision.group_id, 2U);
+  EXPECT_EQ(capture.diagnostics.active_group_count, 2U);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 104, 220.0, 221.0), context);
+
+  ASSERT_EQ(capture.count, 3U);
+  ASSERT_TRUE(capture.decision.triggered);
+  EXPECT_EQ(capture.decision.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(capture.decision.group_id, 0U);
+  EXPECT_EQ(capture.diagnostics.group_id, 0U);
+  EXPECT_EQ(capture.diagnostics.active_group_count, 2U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kParallelLimit);
   EXPECT_FALSE(strategy.last_signal_diagnostics_valid());
 }
 

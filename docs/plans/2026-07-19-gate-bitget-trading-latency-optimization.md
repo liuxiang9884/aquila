@@ -232,7 +232,7 @@ JSON 固定缓冲区时生成。
 ### 已锁定 contract
 
 1. `OrderPlaceRequest` 是唯一 place 业务 request，至少包含：
-   - `local_order_id`、`parent_id`；
+   - `local_order_id`、`group_id`；
    - `double price`、`double quantity`；
    - `char symbol[32]` 与 `symbol_size`；
    - `price_decimal_places`、`quantity_decimal_places`；

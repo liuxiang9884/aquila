@@ -13,6 +13,47 @@ from pathlib import Path
 getcontext().prec = 34
 
 
+BITGET_CLIENT_OID_LENGTH = 29
+BITGET_CLIENT_OID_NAMESPACE_ALPHABET = frozenset(
+    "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+)
+BITGET_CLIENT_OID_LOCAL_ID_ALPHABET = frozenset(
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+)
+UINT64_MAX = (1 << 64) - 1
+
+
+def bitget_client_oid_parts(client_oid: str) -> tuple[str, str] | None:
+    if (
+        len(client_oid) == BITGET_CLIENT_OID_LENGTH
+        and client_oid.startswith("a1-")
+        and client_oid[15] == "-"
+        and all(
+            char in BITGET_CLIENT_OID_NAMESPACE_ALPHABET
+            for char in client_oid[3:15]
+        )
+        and client_oid[3:15] != "000000000000"
+        and all(
+            char in BITGET_CLIENT_OID_LOCAL_ID_ALPHABET
+            for char in client_oid[16:]
+        )
+    ):
+        local_order_id = int(client_oid[16:], 36)
+        if local_order_id <= UINT64_MAX:
+            return client_oid[3:15], str(local_order_id)
+        return None
+    if client_oid.startswith("a-") and client_oid[2:].isdigit():
+        local_order_id = int(client_oid[2:])
+        if local_order_id <= UINT64_MAX:
+            return "", str(local_order_id)
+    return None
+
+
+def bitget_local_order_id(client_oid: str) -> str:
+    parts = bitget_client_oid_parts(client_oid)
+    return parts[1] if parts is not None else ""
+
+
 ORDER_STAGE_BOOK_TICKER_ID_FIELDS = [
     "ack_lead_id",
     "ack_lag_id",
@@ -60,7 +101,7 @@ ORDER_FEEDBACK_ID_PREFIX_BY_KIND = {
 ORDER_DETAIL_FIELDS = [
     "run_id",
     "local_order_id",
-    "parent_id",
+    "group_id",
     "route_id",
     "text_order_id",
     "request_sequence",
@@ -251,7 +292,7 @@ LATENCY_DETAIL_FIELDS = [
     "run_id",
     "latency_key",
     "local_order_id",
-    "parent_id",
+    "group_id",
     "route_id",
     "exchange_order_id",
     "exchange",
@@ -609,7 +650,7 @@ def choose_nonzero(*values: str | None) -> str:
 def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
     copy_fields = {
         "local_order_id",
-        "parent_id",
+        "group_id",
         "route_id",
         "trigger_exchange",
         "trigger_symbol_id",
@@ -653,7 +694,7 @@ def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
     for key in copy_fields:
         if key in fields:
             order[key] = fields[key]
-    order["source_schema"] = "submitted_v1"
+    order["source_schema"] = "submitted_v2"
 
 
 def merge_intent_rejected(order: dict[str, str], fields: dict[str, str]) -> None:
@@ -708,7 +749,7 @@ def merge_intent_rejected(order: dict[str, str], fields: dict[str, str]) -> None
 
 def merge_send(order: dict[str, str], fields: dict[str, str]) -> None:
     order["local_order_id"] = fields.get("local_order_id", order.get("local_order_id", ""))
-    for key in ("parent_id", "route_id"):
+    for key in ("group_id", "route_id"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     order["request_sequence"] = fields.get("request_sequence", "")
@@ -874,7 +915,7 @@ def merge_tcp_info(order: dict[str, str], fields: dict[str, str]) -> None:
 
 
 def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
-    for key in ("parent_id", "route_id", "order_session_id", "ack_cpu"):
+    for key in ("group_id", "route_id", "order_session_id", "ack_cpu"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     merge_tcp_info(order, fields)
@@ -906,7 +947,7 @@ def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
 def merge_strategy_order_response_context(
     order: dict[str, str], fields: dict[str, str]
 ) -> None:
-    for key in ("parent_id", "route_id"):
+    for key in ("group_id", "route_id"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     prefix = ORDER_RESPONSE_ID_PREFIX_BY_KIND.get(fields.get("kind", ""))
@@ -928,7 +969,7 @@ def merge_stage_book_ticker_ids(
 
 
 def merge_submit_response(order: dict[str, str], fields: dict[str, str]) -> None:
-    for key in ("parent_id", "route_id", "order_session_id", "ack_cpu"):
+    for key in ("group_id", "route_id", "order_session_id", "ack_cpu"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     merge_tcp_info(order, fields)
@@ -948,7 +989,7 @@ def merge_submit_response(order: dict[str, str], fields: dict[str, str]) -> None
 
 
 def merge_latency_diagnostic(order: dict[str, str], fields: dict[str, str]) -> None:
-    for key in ("parent_id", "route_id", "order_session_id"):
+    for key in ("group_id", "route_id", "order_session_id"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     append_unique_text(order, "diagnostic_cpu", fields.get("diagnostic_cpu"))
@@ -1026,7 +1067,7 @@ def merge_latency_diagnostic(order: dict[str, str], fields: dict[str, str]) -> N
 
 
 def merge_feedback(order: dict[str, str], fields: dict[str, str]) -> None:
-    for key in ("parent_id", "route_id"):
+    for key in ("group_id", "route_id"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     order["exchange_order_id"] = choose_nonzero(
@@ -1065,7 +1106,7 @@ def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
     for key in (
         "symbol_id",
         "symbol",
-        "parent_id",
+        "group_id",
         "route_id",
         "status",
         "reduce_only",
@@ -1329,7 +1370,7 @@ def analyze_order_detail(
                 merge_session_connected(session, fields)
         elif tag == "lead_lag_order_submitted":
             local_order_id = fields.get("local_order_id", "")
-            if local_order_id == "":
+            if local_order_id == "" or fields.get("group_id", "") == "":
                 continue
             order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
             merge_submitted(order, fields)
@@ -1370,8 +1411,8 @@ def analyze_order_detail(
             merge_bitget_ack(order, fields)
         elif tag == "bitget_order_feedback_protocol_update":
             client_oid = fields.get("client_oid", "")
-            local_order_id = client_oid.removeprefix("a-")
-            if local_order_id == "" or local_order_id == client_oid:
+            local_order_id = bitget_local_order_id(client_oid)
+            if local_order_id == "":
                 continue
             order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
             merge_bitget_protocol_feedback(order, fields)
@@ -1989,7 +2030,7 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "run_id": order.get("run_id", ""),
             "latency_key": f"{order.get('run_id', '')}:{local_order_id}",
             "local_order_id": local_order_id,
-            "parent_id": order.get("parent_id", ""),
+            "group_id": order.get("group_id", ""),
             "route_id": order.get("route_id", ""),
             "exchange_order_id": order.get("exchange_order_id", ""),
             "exchange": order.get("exchange", ""),

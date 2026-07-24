@@ -15,6 +15,10 @@
 namespace aquila::bitget {
 namespace {
 
+ClientOidRunNamespace TestRunNamespace() {
+  return ClientOidRunNamespace::Parse("0123456789AB").value();
+}
+
 websocket::MessageView TextView(std::string_view payload) noexcept {
   return {
       .kind = websocket::PayloadKind::kText,
@@ -88,7 +92,7 @@ Session MakeSession(RecordingPublisher& publisher,
       MakeConfig(prepared_write_slots),
       LoginCredentials{
           .api_key = "key", .api_secret = "secret", .passphrase = "phrase"},
-      publisher);
+      TestRunNamespace(), publisher);
 }
 
 constexpr std::string_view kLoginSuccess =
@@ -100,13 +104,13 @@ constexpr std::string_view kFastFillSubscribeSuccess =
 constexpr std::string_view kAcceptedOrder = R"({
   "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
   "data":[{"category":"usdt-futures","orderId":"9988",
-    "clientOid":"a-72057594037927978","qty":"1.5",
+    "clientOid":"a1-0123456789AB-00JPIA9PM8JSA","qty":"1.5",
     "holdMode":"one_way_mode","marginMode":"crossed",
     "cumExecQty":"0","avgPrice":"0","orderStatus":"new",
     "updatedTime":"1750034397076"}]})";
 constexpr std::string_view kMalformedAquilaOrder = R"({
   "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
-  "data":[{"clientOid":"a-42"}]})";
+  "data":[{"clientOid":"a1-0123456789AB-00000000000!1"}]})";
 constexpr std::string_view kForeignOrder = R"({
   "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
   "data":[{"clientOid":"manual-42"}]})";
@@ -452,11 +456,11 @@ TEST(BitgetOrderFeedbackSessionTest,
     "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
     "data":[
       {"category":"usdt-futures","orderId":"9988",
-       "clientOid":"a-72057594037927978","qty":"1.5",
+       "clientOid":"a1-0123456789AB-00JPIA9PM8JSA","qty":"1.5",
        "holdMode":"one_way_mode","marginMode":"crossed",
        "cumExecQty":"0","avgPrice":"0","orderStatus":"new",
        "updatedTime":"1750034397076"},
-      {"clientOid":"a-42"}]})";
+      {"clientOid":"a1-0123456789AB-00000000000!1"}]})";
 
   session.Handle(TextView(payload));
 

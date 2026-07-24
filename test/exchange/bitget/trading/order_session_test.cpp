@@ -16,6 +16,10 @@
 namespace aquila::bitget {
 namespace {
 
+ClientOidRunNamespace TestRunNamespace() {
+  return ClientOidRunNamespace::Parse("0123456789AB").value();
+}
+
 websocket::MessageView TextView(std::string_view payload) {
   return websocket::MessageView{
       .kind = websocket::PayloadKind::kText,
@@ -54,7 +58,7 @@ struct RecordingHandler {
 core::OrderPlaceRequest MakePlaceOrder(std::uint64_t local_order_id) noexcept {
   core::OrderPlaceRequest request{
       .local_order_id = local_order_id,
-      .parent_id = 7,
+      .group_id = 77,
       .price = 100000.0,
       .quantity = 0.001,
       .gateway_route_id = 3,
@@ -73,7 +77,7 @@ core::OrderCancelRequest MakeCancelOrder(
     std::uint64_t local_order_id) noexcept {
   return core::OrderCancelRequest{
       .local_order_id = local_order_id,
-      .parent_id = 7,
+      .group_id = 77,
       .gateway_route_id = 3,
   };
 }
@@ -92,7 +96,7 @@ class TestOrderSession
             LoginCredentials{.api_key = "key",
                              .api_secret = "secret",
                              .passphrase = "phrase"},
-            handler, request_capacity, cache_capacity) {}
+            TestRunNamespace(), handler, request_capacity, cache_capacity) {}
 
  private:
   static websocket::ConnectionConfig MakeConfig(
@@ -120,14 +124,18 @@ void ActivateAndLogin(TestOrderSession<Handler>* session) {
   ASSERT_TRUE(session->Ready());
 }
 
-std::string SuccessResponse(const OrderSendResult& sent, std::string_view topic,
-                            std::uint64_t local_order_id,
-                            std::uint64_t exchange_order_id) {
+std::string SuccessResponse(
+    const OrderSendResult& sent, std::string_view topic,
+    std::uint64_t local_order_id, std::uint64_t exchange_order_id,
+    ClientOidRunNamespace run_namespace = TestRunNamespace()) {
   const std::string creation_time =
       topic == "place-order" ? R"(,"cTime":"1750034397008")" : "";
+  std::array<char, ClientOidCodec::kEncodedSize> client_oid_buffer{};
+  const std::string_view client_oid =
+      ClientOidCodec::Format(run_namespace, local_order_id, client_oid_buffer);
   return fmt::format(
-      R"({{"event":"trade","id":"{}","topic":"{}","args":[{{"orderId":"{}","clientOid":"a-{}"{}}}],"code":"0","msg":"success","connId":"connection-1","ts":"1750034397076"}})",
-      sent.encoded_request_id, topic, exchange_order_id, local_order_id,
+      R"({{"event":"trade","id":"{}","topic":"{}","args":[{{"orderId":"{}","clientOid":"{}"{}}}],"code":"0","msg":"success","connId":"connection-1","ts":"1750034397076"}})",
+      sent.encoded_request_id, topic, exchange_order_id, client_oid,
       creation_time);
 }
 
@@ -312,7 +320,7 @@ TEST(BitgetOrderSessionTest, PlaceAckCorrelatesCachesAndDoesNotAccept) {
   ASSERT_EQ(handler.responses.size(), 1U);
   EXPECT_EQ(handler.responses[0].kind, OrderResponseKind::kAck);
   EXPECT_EQ(handler.responses[0].local_order_id, 123U);
-  EXPECT_EQ(handler.responses[0].parent_id, 7U);
+  EXPECT_EQ(handler.responses[0].group_id, 77U);
   EXPECT_EQ(handler.responses[0].route_id, 3U);
   EXPECT_EQ(handler.responses[0].exchange_order_id, 9988U);
   EXPECT_EQ(handler.responses[0].exchange_ns, 1750034397076000000LL);
@@ -394,6 +402,23 @@ TEST(BitgetOrderSessionTest, MismatchedClientOidDoesNotConsumeCorrelation) {
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
 
   session.Handle(TextView(SuccessResponse(sent, "place-order", 124, 9988)));
+
+  EXPECT_TRUE(handler.responses.empty());
+  EXPECT_EQ(session.inflight_count(), 1U);
+  EXPECT_EQ(session.stats().correlation_mismatches, 1U);
+}
+
+TEST(BitgetOrderSessionTest,
+     MismatchedClientOidRunNamespaceDoesNotConsumeCorrelation) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(&session);
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(
+      SuccessResponse(sent, "place-order", 123, 9988,
+                      ClientOidRunNamespace::Parse("ZYXWVTSRQPNM").value())));
 
   EXPECT_TRUE(handler.responses.empty());
   EXPECT_EQ(session.inflight_count(), 1U);

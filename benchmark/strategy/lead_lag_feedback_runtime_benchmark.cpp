@@ -38,15 +38,21 @@ constexpr std::size_t kOrderCapacity = 8;
 constexpr std::size_t kLatencyIterations = 4096;
 constexpr std::size_t kActualPairCount = 30;
 constexpr std::size_t kDenseActiveOrderCount = 120;
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 constexpr std::size_t kFeedbackStageCount =
     static_cast<std::size_t>(StrategyFeedbackStageForTest::kCount);
 constexpr std::size_t kFeedbackProfileSegmentCount = kFeedbackStageCount + 1U;
+#endif
+
+bitget::ClientOidRunNamespace BitgetRunNamespace() {
+  return bitget::ClientOidRunNamespace::Parse("0123456789AB").value();
+}
 
 [[nodiscard]] core::OrderPlaceRequest BenchmarkPlaceRequest(
-    std::uint64_t local_order_id = 0, std::uint64_t parent_id = 0) noexcept {
+    std::uint64_t local_order_id = 0, std::uint64_t group_id = 0) noexcept {
   core::OrderPlaceRequest request{
       .local_order_id = local_order_id,
-      .parent_id = parent_id,
+      .group_id = group_id,
       .price = 102.1,
       .quantity = 7.0,
       .symbol_id = kSymbolId,
@@ -63,6 +69,7 @@ constexpr std::size_t kFeedbackProfileSegmentCount = kFeedbackStageCount + 1U;
   return request;
 }
 
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 struct FeedbackStageCapture {
   std::array<std::uint64_t, kFeedbackStageCount> timestamps_ns{};
 };
@@ -96,6 +103,7 @@ class FeedbackStageObserverGuard {
   FeedbackStageObserverGuard& operator=(const FeedbackStageObserverGuard&) =
       delete;
 };
+#endif
 
 struct SharedOrderSessionState {
   std::uint64_t place_calls{0};
@@ -225,6 +233,13 @@ using BenchmarkStrategyContext = core::StrategyContext<BenchmarkOrderSession>;
   return config;
 }
 
+[[nodiscard]] Config BenchmarkConfigWithParallel(Exchange lag_exchange,
+                                                 std::uint32_t parallel) {
+  Config config = BenchmarkConfig(lag_exchange);
+  config.pairs.front().execute.parallel = parallel;
+  return config;
+}
+
 [[nodiscard]] Config BenchmarkConfig(Exchange lag_exchange,
                                      std::size_t pair_count) {
   Config config = BenchmarkConfig(lag_exchange);
@@ -272,14 +287,23 @@ using BenchmarkStrategyContext = core::StrategyContext<BenchmarkOrderSession>;
 [[nodiscard]] bool SeedPendingOpenOrder(Strategy& strategy,
                                         BenchmarkStrategyContext& context,
                                         SharedOrderSessionState& state,
-                                        Exchange lag_exchange) {
+                                        Exchange lag_exchange,
+                                        std::size_t active_group_count = 1) {
   const auto base_ns = benchmarking::RealtimeNowNs();
   strategy.OnBookTicker(Ticker(lag_exchange, base_ns, 101.57, 102.02), context);
   strategy.OnBookTicker(
       Ticker(Exchange::kBinance, base_ns + 1'000, 100.0, 101.0), context);
+  for (std::size_t index = 1; index < active_group_count; ++index) {
+    if (!strategy.AddHoldGroupForTest(kSymbolId,
+                                      /*signed_position_quantity=*/1.0,
+                                      /*trailing_price=*/1.0)) {
+      return false;
+    }
+  }
   strategy.OnBookTicker(
       Ticker(Exchange::kBinance, base_ns + 2'000, 112.0, 113.0), context);
-  return state.place_calls == 1 && state.last_place_local_order_id != 0;
+  return state.place_calls == 1 && state.last_place_local_order_id != 0 &&
+         strategy.ActiveGroupCountForTest(kSymbolId) == active_group_count;
 }
 
 [[nodiscard]] OrderFeedbackEvent TerminalFillEvent(
@@ -331,11 +355,14 @@ using BenchmarkStrategyContext = core::StrategyContext<BenchmarkOrderSession>;
     std::uint64_t local_order_id,
     std::array<char, 512 + simdjson::SIMDJSON_PADDING>*
         payload_buffer) noexcept {
+  std::array<char, bitget::ClientOidCodec::kEncodedSize> client_oid_buffer{};
+  const std::string_view client_oid = bitget::ClientOidCodec::Format(
+      BitgetRunNamespace(), local_order_id, client_oid_buffer);
   const auto result = fmt::format_to_n(
       payload_buffer->data(),
       payload_buffer->size() - simdjson::SIMDJSON_PADDING,
-      R"({{"action":"snapshot","arg":{{"instType":"UTA","topic":"order"}},"data":[{{"category":"usdt-futures","orderId":"{}","clientOid":"a-{}","qty":"7","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"7","avgPrice":"102.10","orderStatus":"filled","updatedTime":"200"}}]}})",
-      local_order_id + 1000, local_order_id);
+      R"({{"action":"snapshot","arg":{{"instType":"UTA","topic":"order"}},"data":[{{"category":"usdt-futures","orderId":"{}","clientOid":"{}","qty":"7","holdMode":"one_way_mode","marginMode":"crossed","cumExecQty":"7","avgPrice":"102.10","orderStatus":"filled","updatedTime":"200"}}]}})",
+      local_order_id + 1000, client_oid);
   if (result.size > payload_buffer->size() - simdjson::SIMDJSON_PADDING) {
     return {};
   }
@@ -485,7 +512,7 @@ void BM_LeadLagBitgetFeedbackParserShmToRuntimeTerminalFillLatency(
     const bitget::OrderFeedbackParseResult parsed =
         bitget::ParseBitgetOrderFeedbackMessage(
             payload, simdjson::SIMDJSON_PADDING, kFeedbackLocalReceiveNs,
-            parser, parser_stats,
+            parser, parser_stats, BitgetRunNamespace(),
             [&publisher, &published](const OrderFeedbackEvent& event) noexcept {
               published = publisher.Publish(event);
             });
@@ -635,6 +662,8 @@ void BM_LeadLagOrderManagerTerminalFillLatency(benchmark::State& state) {
 void RunLeadLagStrategyTerminalFillLatency(benchmark::State& state,
                                            Exchange lag_exchange) {
   benchmarking::EnsureLoggingStarted();
+  const std::size_t active_group_count =
+      static_cast<std::size_t>(state.range(0));
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(kLatencyIterations);
 
@@ -644,9 +673,10 @@ void RunLeadLagStrategyTerminalFillLatency(benchmark::State& state,
     BenchmarkOrderSession session(&session_state);
     BenchmarkOrderManager order_manager(session, kOrderCapacity, kStrategyId);
     BenchmarkStrategyContext context(order_manager);
-    auto strategy = std::make_unique<Strategy>(BenchmarkConfig(lag_exchange));
-    if (!SeedPendingOpenOrder(*strategy, context, session_state,
-                              lag_exchange)) {
+    auto strategy = std::make_unique<Strategy>(BenchmarkConfigWithParallel(
+        lag_exchange, static_cast<std::uint32_t>(active_group_count)));
+    if (!SeedPendingOpenOrder(*strategy, context, session_state, lag_exchange,
+                              active_group_count)) {
       state.ResumeTiming();
       state.SkipWithError("failed to seed pending lead lag order");
       return;
@@ -684,6 +714,7 @@ void RunLeadLagStrategyTerminalFillLatency(benchmark::State& state,
   state.SetItemsProcessed(state.iterations());
 }
 
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 void SetFeedbackProfileSegmentCounters(benchmark::State& state,
                                        std::string_view name,
                                        std::vector<std::uint64_t> samples_ns) {
@@ -781,6 +812,7 @@ void BM_LeadLagStrategyGateTerminalFillStageProfile(benchmark::State& state) {
   }
   state.SetItemsProcessed(state.iterations());
 }
+#endif
 
 void BM_LeadLagStrategyGateTerminalFillLatency(benchmark::State& state) {
   RunLeadLagStrategyTerminalFillLatency(state, Exchange::kGate);
@@ -806,6 +838,20 @@ void BM_LeadLagStrategyBitgetTerminalFillLatency(benchmark::State& state) {
       .role = OrderRole::kTaker,
       .is_finished = true,
   };
+}
+
+template <typename OrderT, typename GroupT>
+void SetOrderGroupIdentity(OrderT* order, const GroupT& group) noexcept {
+  if constexpr (requires(OrderT& value, const GroupT& group_value) {
+                  value.group_index = group_value.group_index;
+                }) {
+    order->group_index = group.group_index;
+  }
+  if constexpr (requires(OrderT& value, const GroupT& group_value) {
+                  value.place_request.group_id = group_value.group_id;
+                }) {
+    order->place_request.group_id = group.group_id;
+  }
 }
 
 void BM_LeadLagLogOrderFeedbackLatency(benchmark::State& state) {
@@ -937,20 +983,30 @@ void BM_LeadLagLogTerminalFeedbackPairLatency(benchmark::State& state) {
 void BM_LeadLagExecutionApplyTerminalOrderLatency(benchmark::State& state) {
   const InstrumentMetadata instrument =
       BenchmarkConfig(Exchange::kGate).pairs.front().lag_instrument;
-  const core::StrategyOrder order = TerminalFilledOrder();
+  const std::size_t active_group_count =
+      static_cast<std::size_t>(state.range(0));
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(kLatencyIterations);
 
   for (auto _ : state) {
     state.PauseTiming();
     ExecutionState execution;
-    execution.Init(1);
-    if (execution.StartOpenOrder(order.place_request.local_order_id) ==
-        nullptr) {
+    (void)execution.Init(static_cast<std::uint32_t>(active_group_count));
+    bool seeded = true;
+    for (std::size_t index = 1; index < active_group_count; ++index) {
+      seeded =
+          seeded && execution.AddHoldGroup(/*signed_position_quantity=*/1.0,
+                                           /*trailing_price=*/1.0) != nullptr;
+    }
+    core::StrategyOrder order = TerminalFilledOrder();
+    ExecutionGroup* target_group =
+        execution.StartOpenOrder(order.place_request.local_order_id);
+    if (!seeded || target_group == nullptr) {
       state.ResumeTiming();
       state.SkipWithError("failed to seed execution state");
       return;
     }
+    SetOrderGroupIdentity(&order, *target_group);
     state.ResumeTiming();
 
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
@@ -961,7 +1017,7 @@ void BM_LeadLagExecutionApplyTerminalOrderLatency(benchmark::State& state) {
     state.PauseTiming();
 
     if (result != ExecutionApplyResult::kAppliedHold ||
-        execution.active_group_count() != 1) {
+        execution.active_group_count() != active_group_count) {
       state.ResumeTiming();
       state.SkipWithError("execution state did not apply terminal order");
       return;
@@ -1056,17 +1112,31 @@ BENCHMARK(BM_LeadLagOrderManagerTerminalFillLatency)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagStrategyGateTerminalFillLatency)
+    ->ArgName("active_groups")
+    ->Arg(1)
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagStrategyBitgetTerminalFillLatency)
+    ->ArgName("active_groups")
+    ->Arg(1)
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 BENCHMARK(BM_LeadLagStrategyGateTerminalFillStageProfile)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
+#endif
 BENCHMARK(BM_LeadLagLogOrderFeedbackLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
@@ -1080,6 +1150,12 @@ BENCHMARK(BM_LeadLagLogTerminalFeedbackPairLatency)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagExecutionApplyTerminalOrderLatency)
+    ->ArgName("active_groups")
+    ->Arg(1)
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);

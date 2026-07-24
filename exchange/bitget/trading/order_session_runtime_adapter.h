@@ -37,7 +37,7 @@ namespace aquila::bitget {
   return core::OrderResponseEvent{
       .kind = ToCoreOrderResponseKind(response.kind),
       .local_order_id = response.local_order_id,
-      .parent_id = response.parent_id,
+      .group_id = response.group_id,
       .exchange_order_id = response.exchange_order_id,
       .route_id = response.route_id,
       .local_receive_ns = response.local_receive_ns,
@@ -54,11 +54,13 @@ inline void LogBitgetErrorResponse(const OrderResponse& response) noexcept {
   }
   NOVA_WARNING(
       "bitget_order_response_error kind={} request_type={} "
-      "request_sequence={} local_order_id={} exchange_order_id={} "
+      "request_sequence={} local_order_id={} group_id={} "
+      "route_id={} exchange_order_id={} "
       "error_code={} local_receive_ns={} exchange_ns={}",
       magic_enum::enum_name(response.kind),
       magic_enum::enum_name(response.request_type), response.request_sequence,
-      response.local_order_id, response.exchange_order_id, response.error_code,
+      response.local_order_id, response.group_id, response.route_id,
+      response.exchange_order_id, response.error_code,
       response.local_receive_ns, response.exchange_ns);
 }
 
@@ -118,17 +120,19 @@ class OrderSessionRuntimeAdapter {
 
   OrderSessionRuntimeAdapter(
       websocket::ConnectionConfig config, LoginCredentials credentials,
+      ClientOidRunNamespace client_oid_run_namespace,
       std::size_t request_map_capacity = kDefaultOrderRequestMapCapacity,
       std::size_t order_id_cache_capacity = kDefaultOrderIdCacheCapacity)
-      : impl_(std::make_unique<Impl>(std::move(config), std::move(credentials),
-                                     request_map_capacity,
-                                     order_id_cache_capacity)) {}
+      : impl_(std::make_unique<Impl>(
+            std::move(config), std::move(credentials), client_oid_run_namespace,
+            request_map_capacity, order_id_cache_capacity)) {}
 
   OrderSessionRuntimeAdapter(OrderSessionConfig config,
                              LoginCredentials credentials)
       : OrderSessionRuntimeAdapter(
             std::move(config.connection), std::move(credentials),
-            config.request_map_capacity, config.order_id_cache_capacity) {}
+            config.client_oid_run_namespace, config.request_map_capacity,
+            config.order_id_cache_capacity) {}
 
   ~OrderSessionRuntimeAdapter() {
     Stop();
@@ -221,8 +225,10 @@ class OrderSessionRuntimeAdapter {
   class Impl {
    public:
     Impl(websocket::ConnectionConfig config, LoginCredentials credentials,
+         ClientOidRunNamespace client_oid_run_namespace,
          std::size_t request_map_capacity, std::size_t order_id_cache_capacity)
-        : session_(std::move(config), std::move(credentials), response_handler_,
+        : session_(std::move(config), std::move(credentials),
+                   client_oid_run_namespace, response_handler_,
                    request_map_capacity, order_id_cache_capacity) {}
 
     ~Impl() {

@@ -12,6 +12,8 @@ name = "bitget_order_feedback_high_speed_private"
 category = "usdt-futures"
 position_mode = "one_way_mode"
 margin_mode = "crossed"
+# Reserved template value. Fresh-run prepare must replace it before live use.
+client_oid_run_namespace = "000000000000"
 
 [order_feedback_session.credentials]
 api_key_env = "BITGET_TEST_KEY"

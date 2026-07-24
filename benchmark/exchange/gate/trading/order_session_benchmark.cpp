@@ -517,7 +517,7 @@ bool ActivateLoginOnly(Session& session,
   command.kind = core::OrderGatewayCommandKind::kPlace;
   command.command_seq = local_order_id;
   command.payload.place = MakeStrategyPlaceOrder(local_order_id);
-  command.payload.place.parent_id = 1;
+  command.payload.place.group_id = 1;
   command.payload.place.gateway_route_id = 0;
   command.payload.place.time_in_force = TimeInForce::kImmediateOrCancel;
   return command;
