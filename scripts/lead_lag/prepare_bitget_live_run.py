@@ -1,8 +1,10 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
 import argparse
+import hashlib
 import json
 import re
+import secrets
 import sys
 import tomllib
 from dataclasses import asdict, dataclass
@@ -12,7 +14,11 @@ from typing import Any
 import run_live_with_guard as guard
 
 
-MANIFEST_SCHEMA = "aquila.bitget_lead_lag_live_manifest.v2"
+MANIFEST_SCHEMA = "aquila.bitget_lead_lag_live_manifest.v3"
+CLIENT_OID_SCHEMA = "a1"
+CLIENT_OID_RUN_NAMESPACE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+CLIENT_OID_RUN_NAMESPACE_LENGTH = 12
+CLIENT_OID_RESERVED_RUN_NAMESPACE = "000000000000"
 TMP_ROOT = Path("/home/liuxiang/tmp")
 PROC_ROOT = Path("/proc")
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -29,10 +35,45 @@ class PreparedRuntimeConfigs:
     strategy_config: Path
     gateway_config: Path
     feedback_config: Path
+    order_session_configs: tuple[Path, ...]
     manifest: Path
     gateway_shm: str
     feedback_shm: str
     route_count: int
+    client_oid_run_namespace: str
+
+
+def generate_client_oid_run_namespace() -> str:
+    while True:
+        value = secrets.randbits(60)
+        encoded = "".join(
+            CLIENT_OID_RUN_NAMESPACE_ALPHABET[
+                (value >> shift) & 0x1F
+            ]
+            for shift in range(55, -1, -5)
+        )
+        if encoded != CLIENT_OID_RESERVED_RUN_NAMESPACE:
+            return encoded
+
+
+def validate_client_oid_run_namespace(value: Any, *, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != CLIENT_OID_RUN_NAMESPACE_LENGTH
+        or any(
+            byte not in CLIENT_OID_RUN_NAMESPACE_ALPHABET
+            for byte in value
+        )
+    ):
+        raise ValueError(
+            f"{label}: client_oid_run_namespace must be 12 uppercase "
+            "Crockford Base32 characters"
+        )
+    if value == CLIENT_OID_RESERVED_RUN_NAMESPACE:
+        raise ValueError(
+            f"{label}: client_oid_run_namespace is the reserved template value"
+        )
+    return value
 
 
 def validate_run_id(run_id: str) -> str:
@@ -66,6 +107,38 @@ def load_toml(path: Path) -> dict[str, Any]:
         raise ValueError(
             f"run isolation: cannot read TOML {path}: {type(exc).__name__}: {exc}"
         ) from exc
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(65_536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _validate_config_digests(
+    manifest: dict[str, Any],
+    expected_paths: dict[str, Path],
+) -> None:
+    configs = manifest.get("configs")
+    if not isinstance(configs, dict):
+        raise ValueError("run isolation: manifest missing configs")
+    if set(configs) != set(expected_paths):
+        raise ValueError("run isolation: manifest configs set mismatch")
+    for key, expected_path in expected_paths.items():
+        entry = configs.get(key)
+        if not isinstance(entry, dict):
+            raise ValueError(f"run isolation: manifest missing configs.{key}")
+        if entry.get("path") != str(expected_path):
+            raise ValueError(f"run isolation: configs.{key} path mismatch")
+        expected_digest = entry.get("sha256")
+        if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+            raise ValueError(
+                f"run isolation: manifest missing configs.{key}.sha256"
+            )
+        if sha256_file(expected_path) != expected_digest:
+            raise ValueError(f"run isolation: configs.{key} digest mismatch")
 
 
 def feedback_credential_env_names(path: Path) -> tuple[str, str, str]:
@@ -445,6 +518,27 @@ def _manifest_path(manifest: dict[str, Any], key: str, config_dir: Path) -> Path
     return path
 
 
+def _manifest_paths(
+    manifest: dict[str, Any], key: str, config_dir: Path
+) -> list[Path]:
+    raw_paths = manifest.get(key)
+    if not isinstance(raw_paths, list) or not raw_paths:
+        raise ValueError(f"run isolation: manifest missing {key}")
+    paths: list[Path] = []
+    for index, raw_path in enumerate(raw_paths):
+        if not isinstance(raw_path, str) or not raw_path:
+            raise ValueError(
+                f"run isolation: manifest {key}[{index}] must be a path"
+            )
+        path = Path(raw_path).expanduser().resolve()
+        if path.parent != config_dir:
+            raise ValueError(
+                f"run isolation: {key}[{index}] must be inside {config_dir}"
+            )
+        paths.append(path)
+    return paths
+
+
 def _read_manifest(manifest_path: Path) -> dict[str, Any]:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -478,6 +572,26 @@ def _validate_manifest(
     strategy_path = _manifest_path(manifest, "strategy_config", config_dir)
     gateway_path = _manifest_path(manifest, "gateway_config", config_dir)
     feedback_path = _manifest_path(manifest, "feedback_config", config_dir)
+    order_session_paths = _manifest_paths(
+        manifest, "order_session_configs", config_dir
+    )
+    _validate_config_digests(
+        manifest,
+        {
+            "strategy_config": strategy_path,
+            "gateway_config": gateway_path,
+            "feedback_config": feedback_path,
+            **{
+                f"order_session_config_{index}": path
+                for index, path in enumerate(order_session_paths)
+            },
+        },
+    )
+    if manifest.get("client_oid_schema") != CLIENT_OID_SCHEMA:
+        raise ValueError("run isolation: unsupported client_oid_schema")
+    client_oid_run_namespace = validate_client_oid_run_namespace(
+        manifest.get("client_oid_run_namespace"), label="run isolation manifest"
+    )
     expected_gateway_shm = f"aquila_bitget_order_gateway_{run_id}"
     expected_feedback_shm = f"aquila_bitget_order_feedback_{run_id}"
     if manifest.get("gateway_shm") != expected_gateway_shm:
@@ -525,11 +639,27 @@ def _validate_manifest(
 
     gateway_data = load_toml(gateway_path)
     gateway = required_dict(gateway_data, "order_gateway", "order_gateway")
-    gateway_route_count, _, gateway_sessions = _gateway_order_sessions(
+    gateway_route_count, gateway_session_paths, gateway_sessions = (
+        _gateway_order_sessions(
         gateway, label="run isolation"
+        )
     )
     if gateway_route_count != manifest_route_count:
         raise ValueError("run isolation: gateway route_count mismatch")
+    if gateway_session_paths != order_session_paths:
+        raise ValueError(
+            "run isolation: gateway order session config paths mismatch"
+        )
+    for route_index, session in enumerate(gateway_sessions):
+        route_namespace = validate_client_oid_run_namespace(
+            session.get("client_oid_run_namespace"),
+            label=f"run isolation gateway route {route_index}",
+        )
+        if route_namespace != client_oid_run_namespace:
+            raise ValueError(
+                "run isolation: gateway route client_oid_run_namespace "
+                "mismatch"
+            )
     if required_string(gateway, "shm_name", "order_gateway") != expected_gateway_shm:
         raise ValueError("run isolation: gateway SHM mismatch")
 
@@ -549,6 +679,14 @@ def _validate_manifest(
     )
     if feedback_shm_name != expected_feedback_shm:
         raise ValueError("run isolation: feedback session SHM mismatch")
+    feedback_namespace = validate_client_oid_run_namespace(
+        feedback_session.get("client_oid_run_namespace"),
+        label="run isolation feedback",
+    )
+    if feedback_namespace != client_oid_run_namespace:
+        raise ValueError(
+            "run isolation: feedback client_oid_run_namespace mismatch"
+        )
 
     gateway_credentials = guard.bitget_order_gateway_credential_env_names(gateway_path)
     feedback_credentials = feedback_credential_env_names(feedback_path)
@@ -670,11 +808,20 @@ def prepare_runtime_configs(
     strategy_config = output_dir / f"strategy__{strategy_source.name}"
     gateway_config = output_dir / f"bitget_gateway__{gateway_source.name}"
     feedback_config = output_dir / f"bitget_feedback__{feedback_source.name}"
+    order_session_configs = tuple(
+        output_dir
+        / (
+            f"bitget_order_session_route_{route_index}__"
+            f"{source_path.name}"
+        )
+        for route_index, source_path in enumerate(order_session_sources)
+    )
     manifest_path = output_dir / "bitget_live_manifest.json"
     generated_paths = (
         strategy_config,
         gateway_config,
         feedback_config,
+        *order_session_configs,
         manifest_path,
     )
     if any(path.exists() for path in generated_paths):
@@ -682,16 +829,34 @@ def prepare_runtime_configs(
 
     gateway_shm = f"aquila_bitget_order_gateway_{run_id}"
     feedback_shm = f"aquila_bitget_order_feedback_{run_id}"
+    client_oid_run_namespace = generate_client_oid_run_namespace()
+    for source_path, order_session_config in zip(
+        order_session_sources, order_session_configs, strict=True
+    ):
+        guard.write_toml_overlay(
+            source_path,
+            order_session_config,
+            {
+                (
+                    "order_session",
+                    "client_oid_run_namespace",
+                ): client_oid_run_namespace,
+            },
+        )
     _write_gateway_overlay(
         gateway_source,
         gateway_config,
         gateway_shm,
-        order_session_sources,
+        list(order_session_configs),
     )
     guard.write_toml_overlay(
         feedback_source,
         feedback_config,
-        {("order_feedback_session.shm", "shm_name"): feedback_shm},
+        {
+            ("order_feedback_session", "client_oid_run_namespace"):
+                client_oid_run_namespace,
+            ("order_feedback_session.shm", "shm_name"): feedback_shm,
+        },
     )
     guard.write_toml_overlay(
         strategy_source,
@@ -708,21 +873,45 @@ def prepare_runtime_configs(
         "strategy_config": str(strategy_config),
         "gateway_config": str(gateway_config),
         "feedback_config": str(feedback_config),
+        "order_session_configs": [
+            str(path) for path in order_session_configs
+        ],
+        "configs": {
+            key: {"path": str(path), "sha256": sha256_file(path)}
+            for key, path in {
+                "strategy_config": strategy_config,
+                "gateway_config": gateway_config,
+                "feedback_config": feedback_config,
+                **{
+                    f"order_session_config_{index}": path
+                    for index, path in enumerate(order_session_configs)
+                },
+            }.items()
+        },
         "gateway_shm": gateway_shm,
         "feedback_shm": feedback_shm,
         "route_count": route_count,
+        "client_oid_schema": CLIENT_OID_SCHEMA,
+        "client_oid_run_namespace": client_oid_run_namespace,
         "external_configs_applied": False,
     }
     _atomic_write_json(manifest_path, manifest)
+    _validate_manifest(
+        manifest_path=manifest_path,
+        strategy_command=None,
+        require_applied=False,
+    )
     return PreparedRuntimeConfigs(
         run_id=run_id,
         strategy_config=strategy_config,
         gateway_config=gateway_config,
         feedback_config=feedback_config,
+        order_session_configs=order_session_configs,
         manifest=manifest_path,
         gateway_shm=gateway_shm,
         feedback_shm=feedback_shm,
         route_count=route_count,
+        client_oid_run_namespace=client_oid_run_namespace,
     )
 
 
@@ -807,17 +996,22 @@ def main(argv: list[str] | None = None) -> int:
             feedback_source=args.feedback_config,
             output_dir=output_dir,
         )
-        payload = {
-            key: str(value) if isinstance(value, Path) else value
-            for key, value in asdict(result).items()
-        }
+        payload = asdict(result)
     else:
         payload = mark_external_configs_applied(
             args.runtime_manifest,
             gateway_pid=args.gateway_pid,
             feedback_pid=args.feedback_pid,
         )
-    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            payload,
+            default=str,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

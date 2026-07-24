@@ -14,6 +14,37 @@ if str(SCRIPT_DIR) not in sys.path:
 import analyze_order_detail as orders
 
 
+class BitgetClientOidTest(unittest.TestCase):
+    def test_decodes_fixed_width_and_legacy_client_oid(self):
+        self.assertEqual(
+            orders.bitget_local_order_id(
+                "a1-0123456789AB-000000000002T"
+            ),
+            "101",
+        )
+        self.assertEqual(
+            orders.bitget_local_order_id(
+                "a1-0123456789AB-3W5E11264SGSF"
+            ),
+            "18446744073709551615",
+        )
+        self.assertEqual(orders.bitget_local_order_id("a-101"), "101")
+
+    def test_rejects_malformed_or_non_order_client_oid(self):
+        for client_oid in (
+            "",
+            "a-flat-1700000000000-0",
+            "a1-0123456789AB-3W5E11264SGSG",
+            "a1-0123456789AI-000000000002T",
+            "a1-0123456789AB-000000000002t",
+            "a1-0123456789AB-00000000002T",
+            "a1-0123456789AB_000000000002T",
+            "a-one",
+        ):
+            with self.subTest(client_oid=client_oid):
+                self.assertEqual(orders.bitget_local_order_id(client_oid), "")
+
+
 def write_file(path: Path, text: str) -> None:
     path.write_text(textwrap.dedent(text).strip() + "\n", encoding="utf-8")
 

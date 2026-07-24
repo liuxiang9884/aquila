@@ -678,6 +678,25 @@ def load_guard_summary(path: Path | None) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
+def bitget_client_oid_run_namespace(
+    guard_summary: dict | None,
+) -> str | None:
+    if guard_summary is None:
+        return None
+    runtime_isolation = guard_summary.get("runtime_isolation")
+    if not isinstance(runtime_isolation, dict):
+        return None
+    if runtime_isolation.get("client_oid_schema") != "a1":
+        return None
+    run_namespace = runtime_isolation.get("client_oid_run_namespace")
+    if not isinstance(run_namespace, str):
+        raise ValueError(
+            "Bitget a1 runtime isolation is missing "
+            "client_oid_run_namespace"
+        )
+    return run_namespace
+
+
 def load_strategy_summary(log_paths: list[Path]) -> dict[str, str] | None:
     summary: dict[str, str] | None = None
     tag = "lead_lag_strategy_live_orders_summary"
@@ -1125,6 +1144,14 @@ def write_markdown_report(
             ("fast-fill unique orders", "fast_fill_unique_orders"),
             ("fast-fill duplicate execIds", "fast_fill_duplicate_exec_ids"),
             ("fast-fill validation errors", "fast_fill_validation_errors"),
+            (
+                "fast-fill foreign run namespace ignored",
+                "fast_fill_foreign_run_namespace_records_ignored",
+            ),
+            (
+                "fast-fill legacy clientOid ignored",
+                "fast_fill_legacy_client_oid_records_ignored",
+            ),
             ("authoritative filled orders", "authoritative_filled_orders"),
             ("filled orders missing fast-fill", "filled_orders_missing_fast_fill"),
             (
@@ -1134,6 +1161,14 @@ def write_markdown_report(
             ("quantity mismatch orders", "quantity_mismatch_orders"),
             ("REST matched executions", "rest_matched_execution_records"),
             ("REST unmatched executions", "rest_unmatched_execution_records"),
+            (
+                "REST foreign run namespace ignored",
+                "rest_foreign_run_namespace_records_ignored",
+            ),
+            (
+                "REST legacy clientOid ignored",
+                "rest_legacy_client_oid_records_ignored",
+            ),
         ):
             value = execution_stats.get(key, "unavailable")
             rendered_value = str(value).lower() if isinstance(value, bool) else value
@@ -1627,6 +1662,8 @@ def generate_live_report(
 ) -> LiveReportResult:
     report_dir = output_root / run_id
     report_dir.mkdir(parents=True, exist_ok=False)
+    guard_summary = load_guard_summary(guard_stdout_path)
+    client_oid_run_namespace = bitget_client_oid_run_namespace(guard_summary)
 
     if instrument_catalog_path is None:
         instrument_catalog_path = (
@@ -1656,6 +1693,7 @@ def generate_live_report(
                 order_rows,
                 rest_fills_path=rest_fills_path,
                 run_id=run_id,
+                client_oid_run_namespace=client_oid_run_namespace,
             )
             execution_rows = execution_result.rows
             execution_stats = execution_result.stats
@@ -1663,7 +1701,6 @@ def generate_live_report(
             fillability_rows = bitget_execution.analyze_fillability(
                 order_rows, execution_rows, book_ticker_manifest_path
             )
-    guard_summary = load_guard_summary(guard_stdout_path)
     strategy_summary_paths = [log_path, *(additional_log_paths or [])]
     if guard_stdout_path is not None:
         strategy_summary_paths.append(guard_stdout_path)

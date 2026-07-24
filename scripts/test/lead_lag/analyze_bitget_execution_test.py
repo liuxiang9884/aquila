@@ -91,8 +91,9 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
                 feedback_log,
                 """
                 I2026-07-20 16:33:59.439729740 1:1 order_feedback_session.h:LogFastFillSubscribe:961] bitget_fast_fill_subscribe accepted=true code=0
-                I2026-07-20 16:41:24.761369308 1:1 order_feedback_session.h:LogFastFillUpdate:993] bitget_fast_fill_raw_update topic=fast-fill connection_generation=1 local_message_sequence=20 batch_data_index=0 category=usdt-futures symbol=ALLOUSDT order_id=501 client_oid=a-101 exec_id=601 side=buy hold_side=long exec_price=100.1 exec_quantity=1.5 trade_scope=taker exchange_message_time_ms=1002 exec_time_ms=1001 updated_time_ms=1001 local_receive_realtime_ns=1003500000 local_receive_monotonic_ns=9003500000
-                I2026-07-20 16:41:24.761369309 1:1 order_feedback_session.h:LogFastFillUpdate:993] bitget_fast_fill_raw_update topic=fast-fill connection_generation=1 local_message_sequence=20 batch_data_index=0 category=usdt-futures symbol=ALLOUSDT order_id=501 client_oid=a-101 exec_id=602 side=buy hold_side=long exec_price=100.2 exec_quantity=0.5 trade_scope=taker exchange_message_time_ms=1002 exec_time_ms=1001 updated_time_ms=1001 local_receive_realtime_ns=1003501000 local_receive_monotonic_ns=9003501000
+                I2026-07-20 16:41:24.761369308 1:1 order_feedback_session.h:LogFastFillUpdate:993] bitget_fast_fill_raw_update topic=fast-fill connection_generation=1 local_message_sequence=20 batch_data_index=0 category=usdt-futures symbol=ALLOUSDT order_id=501 client_oid=a1-0123456789AB-000000000002T exec_id=601 side=buy hold_side=long exec_price=100.1 exec_quantity=1.5 trade_scope=taker exchange_message_time_ms=1002 exec_time_ms=1001 updated_time_ms=1001 local_receive_realtime_ns=1003500000 local_receive_monotonic_ns=9003500000
+                I2026-07-20 16:41:24.761369309 1:1 order_feedback_session.h:LogFastFillUpdate:993] bitget_fast_fill_raw_update topic=fast-fill connection_generation=1 local_message_sequence=20 batch_data_index=0 category=usdt-futures symbol=ALLOUSDT order_id=501 client_oid=a1-0123456789AB-000000000002T exec_id=602 side=buy hold_side=long exec_price=100.2 exec_quantity=0.5 trade_scope=taker exchange_message_time_ms=1002 exec_time_ms=1001 updated_time_ms=1001 local_receive_realtime_ns=1003501000 local_receive_monotonic_ns=9003501000
+                I2026-07-20 16:41:24.761369310 1:1 order_feedback_session.h:LogFastFillUpdate:993] bitget_fast_fill_raw_update topic=fast-fill connection_generation=1 local_message_sequence=20 batch_data_index=1 category=usdt-futures symbol=ALLOUSDT order_id=501 client_oid=a1-ZYXWVTSRQPNM-000000000002T exec_id=603 side=buy hold_side=long exec_price=999 exec_quantity=8 trade_scope=taker exchange_message_time_ms=1002 exec_time_ms=1001 updated_time_ms=1001 local_receive_realtime_ns=1003502000 local_receive_monotonic_ns=9003502000
                 """,
             )
             rest_path.write_text(
@@ -102,7 +103,7 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
                             {
                                 "execId": "601",
                                 "orderId": "501",
-                                "clientOid": "a-101",
+                                "clientOid": "a1-0123456789AB-000000000002T",
                                 "symbol": "ALLOUSDT",
                                 "side": "buy",
                                 "execPrice": "100.1",
@@ -119,7 +120,7 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
                             {
                                 "execId": "999",
                                 "orderId": "998",
-                                "clientOid": "a-101",
+                                "clientOid": "a1-0123456789AB-000000000002T",
                                 "symbol": "ALLOUSDT",
                                 "execPrice": "99",
                                 "execQty": "1",
@@ -128,6 +129,15 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
                                 ],
                                 "createdTime": "1001",
                                 "execPnl": "100",
+                            },
+                            {
+                                "execId": "998",
+                                "orderId": "501",
+                                "clientOid": "a1-ZYXWVTSRQPNM-000000000002T",
+                                "symbol": "ALLOUSDT",
+                                "execPrice": "999",
+                                "execQty": "8",
+                                "createdTime": "1001",
                             },
                         ]
                     }
@@ -140,6 +150,7 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
                 order_rows(),
                 rest_fills_path=rest_path,
                 run_id="bitget-run",
+                client_oid_run_namespace="0123456789AB",
             )
 
         self.assertEqual(len(result.rows), 2)
@@ -152,13 +163,19 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
         self.assertEqual(rows["602"]["source"], "fast_fill")
         self.assertEqual(rows["602"]["fast_fill_order_quantity"], "2")
         self.assertEqual(result.stats["fast_fill_subscribed"], True)
-        self.assertEqual(result.stats["fast_fill_records"], 2)
+        self.assertEqual(result.stats["fast_fill_records"], 3)
         self.assertEqual(result.stats["fast_fill_unique_orders"], 1)
+        self.assertEqual(
+            result.stats["fast_fill_foreign_run_namespace_records_ignored"], 1
+        )
         self.assertEqual(result.stats["filled_orders_missing_fast_fill"], 0)
         self.assertEqual(result.stats["quantity_mismatch_orders"], 0)
-        self.assertEqual(result.stats["rest_execution_records"], 2)
+        self.assertEqual(result.stats["rest_execution_records"], 3)
         self.assertEqual(result.stats["rest_matched_execution_records"], 1)
         self.assertEqual(result.stats["rest_unmatched_execution_records"], 1)
+        self.assertEqual(
+            result.stats["rest_foreign_run_namespace_records_ignored"], 1
+        )
 
     def test_classifies_filled_and_zero_fill_ioc_windows(self):
         with tempfile.TemporaryDirectory() as temp_dir:

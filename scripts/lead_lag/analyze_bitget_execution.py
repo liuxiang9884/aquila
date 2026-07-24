@@ -142,7 +142,7 @@ def message_from_line(line: str) -> tuple[str, dict[str, str]]:
 def fast_fill_row(
     fields: dict[str, str], order: dict[str, str] | None, run_id: str
 ) -> dict[str, str]:
-    local_order_id = fields.get("client_oid", "").removeprefix("a-")
+    local_order_id = orders.bitget_local_order_id(fields.get("client_oid", ""))
     order = order or {}
     exec_time_ns = milliseconds_to_nanoseconds(fields.get("exec_time_ms"))
     local_receive_ns = fields.get("local_receive_realtime_ns", "")
@@ -255,9 +255,9 @@ def merge_rest_fill(
 def rest_only_row(fill: dict, order: dict[str, str] | None, run_id: str) -> dict[str, str]:
     client_oid = str(fill.get("clientOid", ""))
     order = order or {}
-    local_order_id = order.get("local_order_id", "") or client_oid.removeprefix(
-        "a-"
-    )
+    local_order_id = order.get(
+        "local_order_id", ""
+    ) or orders.bitget_local_order_id(client_oid)
     exec_time_ns = milliseconds_to_nanoseconds(str(fill.get("createdTime", "")))
     row = {field: "" for field in EXECUTION_DETAIL_FIELDS}
     row.update(
@@ -304,7 +304,20 @@ def analyze_executions(
     *,
     rest_fills_path: Path | None = None,
     run_id: str,
+    client_oid_run_namespace: str | None = None,
 ) -> ExecutionAnalysisResult:
+    if client_oid_run_namespace is not None and (
+        len(client_oid_run_namespace) != 12
+        or client_oid_run_namespace == "000000000000"
+        or any(
+            char not in orders.BITGET_CLIENT_OID_NAMESPACE_ALPHABET
+            for char in client_oid_run_namespace
+        )
+    ):
+        raise ValueError(
+            "client_oid_run_namespace must be 12 uppercase Crockford "
+            "Base32 characters"
+        )
     orders_by_id = {row.get("local_order_id", ""): row for row in order_rows}
     orders_by_exchange_id = {
         row.get("exchange_order_id", ""): row
@@ -315,6 +328,8 @@ def analyze_executions(
     fast_fill_records = 0
     duplicate_exec_ids = 0
     validation_errors = 0
+    fast_fill_foreign_run_namespace_records_ignored = 0
+    fast_fill_legacy_client_oid_records_ignored = 0
     subscribed = False
     with feedback_log_path.open(encoding="utf-8") as input_file:
         for line in input_file:
@@ -332,7 +347,22 @@ def analyze_executions(
                 if exec_id in rows_by_exec_id:
                     duplicate_exec_ids += 1
                     continue
-                local_order_id = fields.get("client_oid", "").removeprefix("a-")
+                client_oid_parts = orders.bitget_client_oid_parts(
+                    fields.get("client_oid", "")
+                )
+                if client_oid_parts is None:
+                    validation_errors += 1
+                    continue
+                record_namespace, local_order_id = client_oid_parts
+                if (
+                    client_oid_run_namespace is not None
+                    and record_namespace != client_oid_run_namespace
+                ):
+                    if record_namespace == "":
+                        fast_fill_legacy_client_oid_records_ignored += 1
+                    else:
+                        fast_fill_foreign_run_namespace_records_ignored += 1
+                    continue
                 rows_by_exec_id[exec_id] = fast_fill_row(
                     fields, orders_by_id.get(local_order_id), run_id
                 )
@@ -340,6 +370,8 @@ def analyze_executions(
     rest_execution_records = 0
     rest_matched_execution_records = 0
     rest_unmatched_execution_records = 0
+    rest_foreign_run_namespace_records_ignored = 0
+    rest_legacy_client_oid_records_ignored = 0
     if rest_fills_path is not None:
         payload = json.loads(rest_fills_path.read_text(encoding="utf-8"))
         fills = payload.get("fills", []) if isinstance(payload, dict) else []
@@ -352,7 +384,22 @@ def analyze_executions(
             exec_id = str(fill.get("execId", ""))
             if exec_id == "":
                 continue
-            local_order_id = str(fill.get("clientOid", "")).removeprefix("a-")
+            client_oid_parts = orders.bitget_client_oid_parts(
+                str(fill.get("clientOid", ""))
+            )
+            if client_oid_parts is None:
+                rest_unmatched_execution_records += 1
+                continue
+            record_namespace, local_order_id = client_oid_parts
+            if (
+                client_oid_run_namespace is not None
+                and record_namespace != client_oid_run_namespace
+            ):
+                if record_namespace == "":
+                    rest_legacy_client_oid_records_ignored += 1
+                else:
+                    rest_foreign_run_namespace_records_ignored += 1
+                continue
             fill_exchange_order_id = str(fill.get("orderId", ""))
             order = orders_by_id.get(local_order_id)
             if (
@@ -425,6 +472,10 @@ def analyze_executions(
         "fast_fill_unique_orders": len(fast_order_ids),
         "fast_fill_duplicate_exec_ids": duplicate_exec_ids,
         "fast_fill_validation_errors": validation_errors,
+        "fast_fill_foreign_run_namespace_records_ignored":
+            fast_fill_foreign_run_namespace_records_ignored,
+        "fast_fill_legacy_client_oid_records_ignored":
+            fast_fill_legacy_client_oid_records_ignored,
         "authoritative_filled_orders": len(filled_orders),
         "filled_orders_missing_fast_fill": len(filled_orders - fast_order_ids),
         "fast_fill_orders_without_authoritative_fill": len(
@@ -434,6 +485,10 @@ def analyze_executions(
         "rest_execution_records": rest_execution_records,
         "rest_matched_execution_records": rest_matched_execution_records,
         "rest_unmatched_execution_records": rest_unmatched_execution_records,
+        "rest_foreign_run_namespace_records_ignored":
+            rest_foreign_run_namespace_records_ignored,
+        "rest_legacy_client_oid_records_ignored":
+            rest_legacy_client_oid_records_ignored,
     }
     return ExecutionAnalysisResult(rows=rows, stats=stats)
 

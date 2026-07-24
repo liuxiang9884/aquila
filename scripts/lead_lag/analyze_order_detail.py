@@ -13,6 +13,47 @@ from pathlib import Path
 getcontext().prec = 34
 
 
+BITGET_CLIENT_OID_LENGTH = 29
+BITGET_CLIENT_OID_NAMESPACE_ALPHABET = frozenset(
+    "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+)
+BITGET_CLIENT_OID_LOCAL_ID_ALPHABET = frozenset(
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+)
+UINT64_MAX = (1 << 64) - 1
+
+
+def bitget_client_oid_parts(client_oid: str) -> tuple[str, str] | None:
+    if (
+        len(client_oid) == BITGET_CLIENT_OID_LENGTH
+        and client_oid.startswith("a1-")
+        and client_oid[15] == "-"
+        and all(
+            char in BITGET_CLIENT_OID_NAMESPACE_ALPHABET
+            for char in client_oid[3:15]
+        )
+        and client_oid[3:15] != "000000000000"
+        and all(
+            char in BITGET_CLIENT_OID_LOCAL_ID_ALPHABET
+            for char in client_oid[16:]
+        )
+    ):
+        local_order_id = int(client_oid[16:], 36)
+        if local_order_id <= UINT64_MAX:
+            return client_oid[3:15], str(local_order_id)
+        return None
+    if client_oid.startswith("a-") and client_oid[2:].isdigit():
+        local_order_id = int(client_oid[2:])
+        if local_order_id <= UINT64_MAX:
+            return "", str(local_order_id)
+    return None
+
+
+def bitget_local_order_id(client_oid: str) -> str:
+    parts = bitget_client_oid_parts(client_oid)
+    return parts[1] if parts is not None else ""
+
+
 ORDER_STAGE_BOOK_TICKER_ID_FIELDS = [
     "ack_lead_id",
     "ack_lag_id",
@@ -1370,8 +1411,8 @@ def analyze_order_detail(
             merge_bitget_ack(order, fields)
         elif tag == "bitget_order_feedback_protocol_update":
             client_oid = fields.get("client_oid", "")
-            local_order_id = client_oid.removeprefix("a-")
-            if local_order_id == "" or local_order_id == client_oid:
+            local_order_id = bitget_local_order_id(client_oid)
+            if local_order_id == "":
                 continue
             order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
             merge_bitget_protocol_feedback(order, fields)

@@ -106,6 +106,7 @@ class GenerateLiveReportTest(unittest.TestCase):
                 guard_stdout,
                 """
                 lead_lag_strategy_live_orders_summary exit_code=0 runtime_exit_code=0 emergency_handoff=false recovery_state=normal needs_reconcile=false manual_intervention=false new_entries_paused=false unknown_local_order_feedbacks=0 duplicate_or_stale_feedbacks=0 terminal_feedbacks_ignored=0 feedback_continuity_lost_events=0
+                {"result":"ok","runtime_isolation":{"client_oid_schema":"a1","client_oid_run_namespace":"0123456789AB"}}
                 """,
             )
             write_file(
@@ -118,9 +119,9 @@ class GenerateLiveReportTest(unittest.TestCase):
             write_file(
                 feedback_log,
                 """
-                I2026-07-20 16:37:14.261900000 3:3 order_feedback_session.h:LogOrderProtocolUpdate:972] bitget_order_feedback_protocol_update topic=order connection_generation=1 local_message_sequence=10 batch_data_index=0 client_oid=a-101 order_id=501 order_status=filled cancel_reason= exchange_message_time_ms=1001 created_time_ms=1000 updated_time_ms=1001 local_receive_realtime_ns=1003000000 local_receive_monotonic_ns=9003000000
+                I2026-07-20 16:37:14.261900000 3:3 order_feedback_session.h:LogOrderProtocolUpdate:972] bitget_order_feedback_protocol_update topic=order connection_generation=1 local_message_sequence=10 batch_data_index=0 client_oid=a1-0123456789AB-000000000002T order_id=501 order_status=filled cancel_reason= exchange_message_time_ms=1001 created_time_ms=1000 updated_time_ms=1001 local_receive_realtime_ns=1003000000 local_receive_monotonic_ns=9003000000
                 I2026-07-20 16:33:59.439729740 3:3 order_feedback_session.h:LogFastFillSubscribe:961] bitget_fast_fill_subscribe accepted=true code=0
-                I2026-07-20 16:41:24.761369308 3:3 order_feedback_session.h:LogFastFillUpdate:993] bitget_fast_fill_raw_update topic=fast-fill connection_generation=1 local_message_sequence=20 batch_data_index=0 category=usdt-futures symbol=ALLOUSDT order_id=501 client_oid=a-101 exec_id=601 side=buy hold_side=long exec_price=100.1 exec_quantity=2 trade_scope=taker exchange_message_time_ms=1002 exec_time_ms=1001 updated_time_ms=1001 local_receive_realtime_ns=1003500000 local_receive_monotonic_ns=9003500000
+                I2026-07-20 16:41:24.761369308 3:3 order_feedback_session.h:LogFastFillUpdate:993] bitget_fast_fill_raw_update topic=fast-fill connection_generation=1 local_message_sequence=20 batch_data_index=0 category=usdt-futures symbol=ALLOUSDT order_id=501 client_oid=a1-0123456789AB-000000000002T exec_id=601 side=buy hold_side=long exec_price=100.1 exec_quantity=2 trade_scope=taker exchange_message_time_ms=1002 exec_time_ms=1001 updated_time_ms=1001 local_receive_realtime_ns=1003500000 local_receive_monotonic_ns=9003500000
                 """,
             )
             rest_fills_path.write_text(
@@ -130,7 +131,7 @@ class GenerateLiveReportTest(unittest.TestCase):
                             {
                                 "execId": "601",
                                 "orderId": "501",
-                                "clientOid": "a-101",
+                                "clientOid": "a1-0123456789AB-000000000002T",
                                 "symbol": "ALLOUSDT",
                                 "side": "buy",
                                 "execPrice": "100.1",

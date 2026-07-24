@@ -20,7 +20,7 @@ import prepare_bitget_live_run as lead_prepare
 import run_live_with_guard as guard
 
 
-MANIFEST_SCHEMA = "aquila.bitget_gateway_smoke_manifest.v1"
+MANIFEST_SCHEMA = "aquila.bitget_gateway_smoke_manifest.v2"
 RUNNER_EXECUTABLE = "bitget_gateway_smoke"
 TMP_ROOT = Path("/home/liuxiang/tmp")
 PROC_ROOT = Path("/proc")
@@ -34,6 +34,7 @@ CONFIG_KEYS = (
     "data_session_config",
     "gateway_config",
     "feedback_config",
+    "order_session_config",
     "smoke_config",
 )
 
@@ -45,6 +46,7 @@ class PreparedRuntimeConfigs:
     data_session_config: Path
     gateway_config: Path
     feedback_config: Path
+    order_session_config: Path
     smoke_config: Path
     manifest: Path
     market_data_shm: str
@@ -53,6 +55,7 @@ class PreparedRuntimeConfigs:
     data_session_log: Path
     gateway_log: Path
     feedback_log: Path
+    client_oid_run_namespace: str
 
 
 def validate_run_id(run_id: str) -> str:
@@ -209,6 +212,7 @@ def validate_runtime_configs(
     data_path: Path,
     gateway_path: Path,
     feedback_path: Path,
+    order_session_path: Path,
     smoke_path: Path,
 ) -> tuple[str, str, str]:
     run_id = manifest["run_id"]
@@ -227,6 +231,14 @@ def validate_runtime_configs(
         raise ValueError("run isolation: contract must be BTC_USDT")
     if manifest.get("runner_executable") != RUNNER_EXECUTABLE:
         raise ValueError("run isolation: runner executable mismatch")
+    if manifest.get("client_oid_schema") != lead_prepare.CLIENT_OID_SCHEMA:
+        raise ValueError("run isolation: unsupported client_oid_schema")
+    client_oid_run_namespace = (
+        lead_prepare.validate_client_oid_run_namespace(
+            manifest.get("client_oid_run_namespace"),
+            label="run isolation manifest",
+        )
+    )
 
     data = load_toml(data_path)
     data_session = required_dict(data, "data_session", "data_session")
@@ -252,6 +264,31 @@ def validate_runtime_configs(
         raise ValueError("run isolation: gateway route_count must be 1")
     if required_string(gateway, "shm_name", "order_gateway") != gateway_shm:
         raise ValueError("run isolation: gateway SHM mismatch")
+    gateway_order_session_path = Path(
+        required_string(
+            routes[0],
+            "order_session_config",
+            "order_gateway.routes[0]",
+        )
+    ).resolve()
+    if gateway_order_session_path != order_session_path:
+        raise ValueError(
+            "run isolation: gateway order session config path mismatch"
+        )
+    order_session_data = load_toml(order_session_path)
+    order_session = required_dict(
+        order_session_data, "order_session", "order_session"
+    )
+    if (
+        lead_prepare.validate_client_oid_run_namespace(
+            order_session.get("client_oid_run_namespace"),
+            label="run isolation order session",
+        )
+        != client_oid_run_namespace
+    ):
+        raise ValueError(
+            "run isolation: order session client_oid_run_namespace mismatch"
+        )
 
     feedback_data = load_toml(feedback_path)
     feedback = required_dict(
@@ -271,6 +308,16 @@ def validate_runtime_configs(
         "remove_existing"
     ) is not False:
         raise ValueError("run isolation: feedback requires fresh create without removal")
+    if (
+        lead_prepare.validate_client_oid_run_namespace(
+            feedback.get("client_oid_run_namespace"),
+            label="run isolation feedback",
+        )
+        != client_oid_run_namespace
+    ):
+        raise ValueError(
+            "run isolation: feedback client_oid_run_namespace mismatch"
+        )
 
     smoke = load_toml(smoke_path)
     probe = required_dict(smoke, "gateway_smoke", "gateway_smoke")
@@ -344,6 +391,7 @@ def validate_manifest(
         paths["data_session_config"],
         paths["gateway_config"],
         paths["feedback_config"],
+        paths["order_session_config"],
         paths["smoke_config"],
     )
     applied = manifest.get("external_configs_applied")
@@ -427,12 +475,16 @@ def prepare_runtime_configs(
     data_session_config = output_dir / f"data__{data_session_source.name}"
     gateway_config = output_dir / f"gateway__{gateway_source.name}"
     feedback_config = output_dir / f"feedback__{feedback_source.name}"
+    order_session_config = (
+        output_dir / f"order_session__{order_session_source.name}"
+    )
     smoke_config = output_dir / f"smoke__{smoke_source.name}"
     manifest_path = output_dir / "bitget_gateway_smoke_manifest.json"
     generated = (
         data_session_config,
         gateway_config,
         feedback_config,
+        order_session_config,
         smoke_config,
         manifest_path,
     )
@@ -442,6 +494,9 @@ def prepare_runtime_configs(
     market_data_shm = f"aquila_bitget_market_data_{run_id}"
     gateway_shm = f"aquila_bitget_order_gateway_{run_id}"
     feedback_shm = f"aquila_bitget_order_feedback_{run_id}"
+    client_oid_run_namespace = (
+        lead_prepare.generate_client_oid_run_namespace()
+    )
     data_session_log = run_dir / "bitget_data_session.log"
     gateway_log = run_dir / "bitget_order_gateway.log"
     feedback_log = run_dir / "bitget_order_feedback_session.log"
@@ -454,13 +509,23 @@ def prepare_runtime_configs(
         },
     )
     guard.write_toml_overlay(
+        order_session_source,
+        order_session_config,
+        {
+            (
+                "order_session",
+                "client_oid_run_namespace",
+            ): client_oid_run_namespace,
+        },
+    )
+    guard.write_toml_overlay(
         gateway_source,
         gateway_config,
         {
             ("log", "file_sink_name"): str(gateway_log),
             ("order_gateway", "shm_name"): gateway_shm,
             ("order_gateway.routes", "order_session_config"): str(
-                order_session_source
+                order_session_config
             ),
         },
     )
@@ -469,6 +534,8 @@ def prepare_runtime_configs(
         feedback_config,
         {
             ("log", "file_sink_name"): str(feedback_log),
+            ("order_feedback_session", "client_oid_run_namespace"):
+                client_oid_run_namespace,
             ("order_feedback_session.shm", "shm_name"): feedback_shm,
         },
     )
@@ -487,6 +554,7 @@ def prepare_runtime_configs(
         "data_session_config": data_session_config,
         "gateway_config": gateway_config,
         "feedback_config": feedback_config,
+        "order_session_config": order_session_config,
         "smoke_config": smoke_config,
     }
     manifest = {
@@ -495,6 +563,8 @@ def prepare_runtime_configs(
         "runner_executable": RUNNER_EXECUTABLE,
         "contract": "BTC_USDT",
         "route_count": 1,
+        "client_oid_schema": lead_prepare.CLIENT_OID_SCHEMA,
+        "client_oid_run_namespace": client_oid_run_namespace,
         "market_data_shm": market_data_shm,
         "gateway_shm": gateway_shm,
         "feedback_shm": feedback_shm,
@@ -517,6 +587,7 @@ def prepare_runtime_configs(
         data_session_config=data_session_config,
         gateway_config=gateway_config,
         feedback_config=feedback_config,
+        order_session_config=order_session_config,
         smoke_config=smoke_config,
         manifest=manifest_path,
         market_data_shm=market_data_shm,
@@ -525,6 +596,7 @@ def prepare_runtime_configs(
         data_session_log=data_session_log,
         gateway_log=gateway_log,
         feedback_log=feedback_log,
+        client_oid_run_namespace=client_oid_run_namespace,
     )
 
 
