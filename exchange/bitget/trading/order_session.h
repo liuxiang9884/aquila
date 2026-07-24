@@ -751,7 +751,11 @@ class OrderSession {
 #if defined(AQUILA_BITGET_ORDER_SESSION_ENABLE_TEST_HOOKS)
     last_order_timing_diagnostic_ = timing;
 #endif
-    LogOrderResponse(response, timing, parsed.client_oid_text);
+    std::array<char, ClientOidCodec::kEncodedSize> client_oid_buffer{};
+    const std::string_view client_oid =
+        ClientOidCodec::Format(client_oid_run_namespace_,
+                               correlation.local_order_id, client_oid_buffer);
+    LogOrderResponse(response, timing, client_oid);
     response_handler_.OnOrderResponse(response);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordResponse();

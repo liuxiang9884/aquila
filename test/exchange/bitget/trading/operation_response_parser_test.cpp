@@ -51,7 +51,6 @@ TEST(BitgetOperationResponseParserTest, ParsesPlaceSuccessAck) {
   ASSERT_TRUE(response.client_oid.ok);
   EXPECT_EQ(response.client_oid.run_namespace.View(), "0123456789AB");
   EXPECT_EQ(response.client_oid.local_order_id, 42U);
-  EXPECT_EQ(response.client_oid_text, "a1-0123456789AB-0000000000016");
   EXPECT_EQ(response.exchange_order_id, 123456789U);
   EXPECT_EQ(response.creation_time_ms, 1750034397008LL);
   EXPECT_EQ(response.exchange_ns, 1750034397076000000LL);

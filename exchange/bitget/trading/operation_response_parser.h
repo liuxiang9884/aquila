@@ -43,7 +43,6 @@ struct OperationResponse {
   OperationTopic topic{OperationTopic::kUnknown};
   DecodedRequestId request_id{};
   ParsedClientOid client_oid{};
-  std::string_view client_oid_text{};
   std::uint64_t exchange_order_id{0};
   std::uint64_t connection_id_hash{0};
   std::uint64_t error_message_hash{0};
@@ -202,7 +201,6 @@ using ::aquila::exchange::detail::ReadSimdjsonString;
     if (!ReadSimdjsonString(value, &client_oid)) {
       return false;
     }
-    response->client_oid_text = client_oid;
     response->client_oid = ClientOidCodec::Parse(client_oid);
     if (!response->client_oid.ok) {
       return false;
