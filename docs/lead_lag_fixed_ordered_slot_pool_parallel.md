@@ -123,8 +123,8 @@ fatal error: third_party/websocket/websocket.h: No such file or directory
 ## 2026-07-23/24 `parallel=8` 实盘 incident 与修复清单
 
 本节是本次 incident 和后续修复的当前事实源。目标是保留已验证事实、阻断条件、处理顺序和验收口径，
-供后续逐项讨论与实现；不在这里预先决定 `clientOid` 编码、timeout owner、REST reconcile 线程模型或
-自动恢复方案。
+供后续逐项讨论与实现。P8-01 的 `clientOid` contract 已于 2026-07-24 锁定并关闭；timeout owner、
+REST reconcile 线程模型和自动恢复方案仍未决定。
 
 ### 运行范围与终态
 
@@ -171,11 +171,50 @@ Fresh Bitget order-info 查询还证明 `clientOid` 跨 run 发生复用：
 但它还不能单独解释两个此前不存在的 ID 为什么同样没有 response，gateway/transport/parser 的
 burst 级 failure path 仍须独立复现。
 
+### P8-01 关闭证据（2026-07-24，非实盘）
+
+普通 Aquila Bitget 订单已改为固定 29 字符
+`a1-<12-char Crockford Base32 run namespace>-<13-char uppercase Base36 local_order_id>`。
+Fresh-run prepare 每轮通过 OS CSPRNG 生成一次完整 60 bit namespace，不建立注册表或查重；一百万个 run
+至少一次随机碰撞的近似概率为 `4.3e-7`。相同 namespace 必须出现在 manifest v3、所有 run-scoped
+OrderSession config 和 feedback config 中；manifest 保存全部生成配置的 SHA-256。Checked-in
+`000000000000` 是不可下单的保留模板，gateway/feedback connect、RTT live preflight/execute 和
+place/cancel encoder 都 fail closed。
+
+Operation Ack 必须同时匹配 request id、当前 namespace 和 `local_order_id`。Authoritative `order`
+feedback 只发布 own namespace；合法 foreign namespace 与历史 `a-<decimal>` 分别计数并忽略，own namespace
+命中后的 malformed suffix 保持 continuity failure。SHM payload、`uint64_t local_order_id`、strategy lane
+和 emergency helper 的 `a-flat-*` 空间均未修改。完整 contract 维护在 `docs/bitget_trading.md`。
+
+Fresh 非实盘证据：
+
+- 两个独立 prepare 进程
+  `p8_01_prepare_a_20260724_0452` / `p8_01_prepare_b_20260724_0452`
+  分别生成 namespace `38EJGX82CWDH` / `BTAT9K428DJE`；同一个 `local_order_id=1` 对应
+  `a1-38EJGX82CWDH-0000000000001` /
+  `a1-BTAT9K428DJE-0000000000001`。证据位于
+  `/home/liuxiang/tmp/<run_id>/configs/bitget_live_manifest.json` 和同名 `.prepare.json`。
+- Debug/Release 的 codec、encoder、operation response、OrderSession、runtime adapter、config、
+  feedback parser/session 和 SHM integration focused tests 全绿；相关 Python prepare/guard/report
+  `125/125` 通过。ASAN 的 identity/parser/config/feedback/SHM 8 项通过，并在本轮发现后修复了
+  operation parser 返回借用 `string_view` 的 UAF。OrderSession/RTT 的剩余 ASAN 崩溃位于 Abseil
+  sanitizer mapping；`860bf39` baseline 的首个 OrderSession test 以同一栈失败，因此不是 P8-01 引入。
+- 同机固定 CPU 的 Release A/B 原始 JSON 位于 `/home/liuxiang/tmp/p8_01_bench/`。Own-run accepted /
+  accepted-with-diagnostics / typical-batch parser 中位数相对 baseline 为约 `+2.6% / -0.9% / +2.2%`；
+  foreign/malformed 慢路径因新增 namespace 分类约 `+12.5% / +14.7%`。Cancel encode 因固定 29 字符
+  增加约 `13ns`，但 production-like direct/SHM submit 未观察到回归；interleaved feedback runtime
+  中 control 与 parser 整链同向漂移约 `6.7% / 7.4%`，未观察到可归因于本项的额外整链回退。
+- 本项实现提交为 `913346d`、`e4148bb`、`ba0f31d`、`405a343`；没有连接交易所、读取 credential 或发送订单。
+  全仓 build 仍被本文前述既有 `third_party/websocket/websocket.h` 缺失阻断。
+
+P8-01 仅关闭跨 run identity 隔离；它不解释 8 个新订单无 response，不关闭 P8-02/P8-03，也不构成恢复
+交易或再次启动 `parallel>1` live 的许可。
+
 ### 问题清单与验收条件
 
 | ID | 优先级 | 问题与影响 | 进入下一次真实订单前的验收条件 |
 | --- | --- | --- | --- |
-| P8-01 | P0 | `local_order_id` 派生的 Bitget `clientOid` 跨 run 重复，破坏 exchange identity 和幂等边界。 | 两个独立进程、连续多个 run 生成的 ID 无重复；Bitget 长度/字符 contract 有单元测试；日志和 REST 可从 `clientOid` 唯一回到 run/order。 |
+| P8-01 | P0（已关闭） | 旧 `local_order_id` 派生的 Bitget `clientOid` 跨 run 重复，破坏 exchange identity 和幂等边界。 | 已由固定 29 字符 `a1` wire contract、fresh 60-bit namespace、manifest/config attestation、回报隔离和上述非实盘证据关闭。 |
 | P8-02 | P0 | Gateway 完成 socket write 后可以无限等待 Ack/terminal，不产生 `UnknownResult`。 | 注入无 Ack、断连和部分 burst response 时，在有界时间进入 `UnknownResult`，停止新发送并输出结构化证据。 |
 | P8-03 | P0 | Aging request 存在时 gateway 仍继续发送，`inflight` 可在残留基线上继续增长。 | 明确 inflight 上限和 fail-closed 行为；stuck request 后不再接受普通开仓，且计数最终只能归零或进入 handoff。 |
 | P8-04 | P0 | Strategy group 可永久停在 entry/exit submitted，fixed slots 不释放，stoploss 不再重试。 | Unknown result 能准确标记 group、暂停新开仓并进入 handoff；不得凭猜测释放 slot、伪造 terminal 或继续策略重试。 |
@@ -183,13 +222,13 @@ burst 级 failure path 仍须独立复现。
 | P8-06 | P0 | Outer guard 的人工 `SIGTERM` 路径停止了进程，却没有 final summary 和 cleanup。 | 真实形状 integration test 证明 `SIGINT/SIGTERM` 均执行 bounded child stop、gateway/feedback quiescence、final REST 或 emergency flatten，并返回规定 exit code。 |
 | P8-07 | P1 | Watchdog 只检查显式错误和进程存活，未发现 5 小时以上 unresolved orders 与账户残仓。 | 增加 submitted/finished aging、gateway inflight aging、REST residual 和 local/REST mismatch gate；触发后自动请求本轮停止。 |
 | P8-08 | P1 | Monitor 同时累计 strategy log 和内容重复的 `guarded_live.stdout`，metrics 翻倍。 | 同一 logical event 只统计一次；fixture 覆盖重复文件、log rotation 和独立 gateway/feedback log。 |
-| P8-09 | Evidence gate | 本轮只能证明容量曾达到 8，不能证明 P8 状态可收敛或最终 flat。 | P8-01..P8-08 修复后先完成 deterministic fault injection、replay 和无真实订单 soak；新的 P2/P8 真实订单仍需当次授权和完整 guarded runbook。 |
+| P8-09 | Evidence gate | 本轮只能证明容量曾达到 8，不能证明 P8 状态可收敛或最终 flat。 | P8-02..P8-08 修复后先完成 deterministic fault injection、replay 和无真实订单 soak；新的 P2/P8 真实订单仍需当次授权和完整 guarded runbook。 |
 | P8-10 | P2 | Ack/terminal latency 只统计有终态的订单，永久 unresolved 被排除，存在幸存者偏差。 | Report 单独输出 unresolved count、age 和右删失口径；不得用普通 P99 掩盖无限等待。 |
 
 ### 处理顺序、边界与验证策略
 
 默认按 `P8-01 → P8-02/P8-03 → P8-04/P8-05 → P8-06 → P8-07/P8-08 → P8-10 → P8-09`
-逐项讨论、设计、测试和提交。每项实现必须使用独立原子 commit；影响订单 identity、状态机、恢复、线程所有权
+逐项讨论、设计、测试和提交；P8-01 已关闭，下一项是 P8-02/P8-03。每项实现必须使用独立原子 commit；影响订单 identity、状态机、恢复、线程所有权
 或真实订单安全门时继续按 L3 执行，并在做具体设计取舍前询问是否启用 Grill Me Enhanced。
 
 共同验证至少包括：
@@ -223,7 +262,7 @@ burst 级 failure path 仍须独立复现。
 - 上述证据只支持 PR #13 的 multi-group 基础设施 merge gate，不证明 `parallel>1` 的 live fillability、
   PnL、风险收益或最大安全资金规模。用户已明确当前不把该分支合并进 main。
 - 所有 checked-in live config 继续保持 `parallel=1`。2026-07-23/24 P8 真实订单已经暴露上述
-  identity、unresolved、guard 和监控阻断；在 P8-01..P8-08 关闭并取得 fresh 非实盘证据前，
+  identity、unresolved、guard 和监控阻断；P8-01 已关闭，但 P8-02..P8-08 仍未关闭并取得 fresh 非实盘证据，
   不得再次启动 `parallel>1` 真实订单。
 - 首次候选继续限定 Bitget、`fanout=1`、每个 group `open_notional<=10 USDT`；任何
   `UnknownResult`、`ContinuityLost`、group mismatch、unresolved order、非 flat 或 guard 异常都必须
