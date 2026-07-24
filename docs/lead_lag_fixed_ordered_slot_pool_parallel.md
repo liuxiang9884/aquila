@@ -120,6 +120,92 @@ fatal error: third_party/websocket/websocket.h: No such file or directory
 因此不能声明全仓 build/ctest 通过；该错误不是本分支引入，affected targets 和上述 focused verification
 均已单独通过。
 
+## 2026-07-23/24 `parallel=8` 实盘 incident 与修复清单
+
+本节是本次 incident 和后续修复的当前事实源。目标是保留已验证事实、阻断条件、处理顺序和验收口径，
+供后续逐项讨论与实现；不在这里预先决定 `clientOid` 编码、timeout owner、REST reconcile 线程模型或
+自动恢复方案。
+
+### 运行范围与终态
+
+- Run id：
+  `20260723_162138_bitget_parallel8_21_n6_hs_fanout1_12h`。
+- Candidate：`feature/lead-lag-parallel-fixed-slot-v4`；Bitget fusion `N=6`（3 HA + 3 HS）、
+  Binance fusion `N=4`、21 symbols、`parallel=8`、`fanout=1`，所有交易请求使用 Bitget HS。
+- Strategy 于 2026-07-23 16:28:37 UTC 启动，原计划运行 12 小时；发现 unresolved order 和账户残仓后，
+  用户授权于 2026-07-24 02:19:17 UTC 提前停止。
+- Authoritative strategy log 最终记录 `682` 个 signals、`442` 个 submitted、`434` 个 finished，
+  submitted/finished 差值为 `8`；最大 `active_groups=8`，`parallel_limit` 拒绝 `206` 次。
+- 向 outer guard 发送 `SIGTERM` 后，strategy、gateway 和 feedback 停止，但 guard 没有输出 final summary，
+  也没有执行账户 cleanup。Fresh REST 仍显示零挂单和 `INTCUSDT short 0.17`。
+- 随后按同一 21-symbol allowlist 手工执行 Bitget emergency helper。它提交一笔
+  `INTCUSDT buy 0.17`、`reduceOnly=YES` 的 market close，order id
+  `1464372925978783746`，成交均价 `104.15`。独立
+  `open orders → positions → open orders` REST snapshot 最终确认零挂单、零持仓；
+  因此本轮终态是人工 emergency `verified_flat`，不是 `normal_exit_flat`。
+- Emergency 结构化证据位于
+  `/home/liuxiang/tmp/20260723_162138_bitget_parallel8_21_n6_hs_fanout1_12h/inputs/emergency_flatten_manual_stop_20260724_0219.json`。
+
+### 已确认的异常链
+
+2026-07-23 20:00:10–20:00:11 UTC，gateway 连续发送 request sequence `188..195`，对应
+local order id `432345564227567804..432345564227567811`。8 个请求都有
+`bitget_order_send`，但之后没有 gateway Ack/reject，也没有 authoritative terminal feedback：
+
+- `804..808` 是 INTC group `12..16` 的 5 个 entry；
+- `809..811` 是 INTC group `7`、`8`、`11` 的 3 个 reduce-only stoploss exit；
+- gateway 的 `inflight` 从此保留 `8` 的基线，后续 burst 一度增长到 `16`，但 gateway 仍继续处理新请求；
+- group `12..16` 的虚假 entry 和 group `7/8/11` 的 `ExitSubmitted` 一起占满 INTC 的 8 个 slots，
+  后续 INTC open intent 被 `parallel_limit` 拒绝；
+- group `7/8/11` 的 REST/local residual 分别为 `0.06/0.09/0.02`，合计 `0.17`，
+  与停止前 Bitget REST 的 `INTCUSDT short 0.17` 完全一致。
+
+Fresh Bitget order-info 查询还证明 `clientOid` 跨 run 发生复用：
+
+- `a-432345564227567804`、`a-432345564227567805` 返回历史 DRAM orders；
+- `a-432345564227567806`、`a-432345564227567807` 返回历史 SNDK orders；
+- `a-432345564227567808`、`a-432345564227567810` 返回历史 VELVET orders；
+- `a-432345564227567809`、`a-432345564227567811` 返回 `25204 Order does not exist`。
+
+因此“跨 run `clientOid` 不唯一”是确定事实，也是本次 silent unresolved burst 的首要触发线索；
+但它还不能单独解释两个此前不存在的 ID 为什么同样没有 response，gateway/transport/parser 的
+burst 级 failure path 仍须独立复现。
+
+### 问题清单与验收条件
+
+| ID | 优先级 | 问题与影响 | 进入下一次真实订单前的验收条件 |
+| --- | --- | --- | --- |
+| P8-01 | P0 | `local_order_id` 派生的 Bitget `clientOid` 跨 run 重复，破坏 exchange identity 和幂等边界。 | 两个独立进程、连续多个 run 生成的 ID 无重复；Bitget 长度/字符 contract 有单元测试；日志和 REST 可从 `clientOid` 唯一回到 run/order。 |
+| P8-02 | P0 | Gateway 完成 socket write 后可以无限等待 Ack/terminal，不产生 `UnknownResult`。 | 注入无 Ack、断连和部分 burst response 时，在有界时间进入 `UnknownResult`，停止新发送并输出结构化证据。 |
+| P8-03 | P0 | Aging request 存在时 gateway 仍继续发送，`inflight` 可在残留基线上继续增长。 | 明确 inflight 上限和 fail-closed 行为；stuck request 后不再接受普通开仓，且计数最终只能归零或进入 handoff。 |
+| P8-04 | P0 | Strategy group 可永久停在 entry/exit submitted，fixed slots 不释放，stoploss 不再重试。 | Unknown result 能准确标记 group、暂停新开仓并进入 handoff；不得凭猜测释放 slot、伪造 terminal 或继续策略重试。 |
+| P8-05 | P0 | 本地 groups、gateway inflight 与 REST orders/positions 没有主动一致性 gate。 | Handoff 使用 `(run identity, clientOid)` 查询订单事实，并证明 open orders/positions；任意缺失、冲突或歧义都保持停机并 stop-and-flat。 |
+| P8-06 | P0 | Outer guard 的人工 `SIGTERM` 路径停止了进程，却没有 final summary 和 cleanup。 | 真实形状 integration test 证明 `SIGINT/SIGTERM` 均执行 bounded child stop、gateway/feedback quiescence、final REST 或 emergency flatten，并返回规定 exit code。 |
+| P8-07 | P1 | Watchdog 只检查显式错误和进程存活，未发现 5 小时以上 unresolved orders 与账户残仓。 | 增加 submitted/finished aging、gateway inflight aging、REST residual 和 local/REST mismatch gate；触发后自动请求本轮停止。 |
+| P8-08 | P1 | Monitor 同时累计 strategy log 和内容重复的 `guarded_live.stdout`，metrics 翻倍。 | 同一 logical event 只统计一次；fixture 覆盖重复文件、log rotation 和独立 gateway/feedback log。 |
+| P8-09 | Evidence gate | 本轮只能证明容量曾达到 8，不能证明 P8 状态可收敛或最终 flat。 | P8-01..P8-08 修复后先完成 deterministic fault injection、replay 和无真实订单 soak；新的 P2/P8 真实订单仍需当次授权和完整 guarded runbook。 |
+| P8-10 | P2 | Ack/terminal latency 只统计有终态的订单，永久 unresolved 被排除，存在幸存者偏差。 | Report 单独输出 unresolved count、age 和右删失口径；不得用普通 P99 掩盖无限等待。 |
+
+### 处理顺序、边界与验证策略
+
+默认按 `P8-01 → P8-02/P8-03 → P8-04/P8-05 → P8-06 → P8-07/P8-08 → P8-10 → P8-09`
+逐项讨论、设计、测试和提交。每项实现必须使用独立原子 commit；影响订单 identity、状态机、恢复、线程所有权
+或真实订单安全门时继续按 L3 执行，并在做具体设计取舍前询问是否启用 Grill Me Enhanced。
+
+共同验证至少包括：
+
+1. 用 deterministic fixture 重现跨 run ID collision 和 8-request burst 无 response；
+2. 覆盖无 Ack、terminal 先于 Ack、部分 response、断连、重复/迟到 feedback 和 REST ambiguous result；
+3. 验证 pair-level new-entry pause、group/slot 不误释放、未知订单不自动重发；
+4. 验证 guard 的 `SIGINT/SIGTERM`、quiescence、幂等 allowlist flatten 和最终 REST flat；
+5. 验证 watchdog/monitor 对 aging、残仓、重复日志和 process exit 的判定；
+6. 完成 focused Debug/Release/ASAN、SHM contract、replay 和 production-like latency regression 后，
+   才能申请下一次小额真实订单授权。
+
+本轮不重新加入 account limiter，不实现同一 run 自动 resume，不扩大 fanout，不改 numeric formatter，
+也不把本次 fillability、PnL、胜率或 latency 当作 P8 production-readiness 结论。任何修复无法证明安全时，
+回滚对应原子 commit，并继续保持 checked-in live config `parallel=1`、PR #13 不合并、`parallel>1` 真实订单阻断。
+
 ## 代码与验证入口
 
 - `core/base/fixed_ordered_slot_pool.h`：初始化时按 effective capacity 分配、运行期固定容量的 FIFO
@@ -136,8 +222,9 @@ fatal error: third_party/websocket/websocket.h: No such file or directory
 
 - 上述证据只支持 PR #13 的 multi-group 基础设施 merge gate，不证明 `parallel>1` 的 live fillability、
   PnL、风险收益或最大安全资金规模。用户已明确当前不把该分支合并进 main。
-- 所有 checked-in live config 继续保持 `parallel=1`。第一次 `parallel=2` 真实订单测试必须另写当次
-  guarded runbook，重新选择自然出现重叠 group 的 symbol，并取得用户单独授权。
+- 所有 checked-in live config 继续保持 `parallel=1`。2026-07-23/24 P8 真实订单已经暴露上述
+  identity、unresolved、guard 和监控阻断；在 P8-01..P8-08 关闭并取得 fresh 非实盘证据前，
+  不得再次启动 `parallel>1` 真实订单。
 - 首次候选继续限定 Bitget、`fanout=1`、每个 group `open_notional<=10 USDT`；任何
   `UnknownResult`、`ContinuityLost`、group mismatch、unresolved order、非 flat 或 guard 异常都必须
   停止本轮并进入 stop-and-flat/handoff。

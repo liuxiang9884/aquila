@@ -111,9 +111,12 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `latency.csv` 已迁移到 `group_id` / `submitted_v2`。`parallel=1/2/4/8/16` synthetic replay、
   同时间窗 788 万条 Binance+Bitget 行情 replay、Debug/Release/ASAN/SHM 测试和 production-like A/B
   benchmark 已通过；candidate/baseline 全量 build 均被既有缺失
-  `third_party/websocket/websocket.h` 阻断。现有 live config 仍全部为 `parallel=1`，没有
-  `parallel>1` 真实订单证据，用户已明确当前不合并该分支；PR #11 后续需按新 schema 单独升级。完整 contract、
-  证据路径和 production-readiness 边界见 `docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。
+  `third_party/websocket/websocket.h` 阻断。2026-07-23/24 P8 真实订单达到
+  `active_groups=8`，但暴露跨 run `clientOid` 复用、8 个订单长期无 Ack/terminal、INTC slots/残仓卡住、
+  watchdog 漏报和人工 `SIGTERM` 未触发 guard cleanup；最终由手工 emergency helper
+  `verified_flat`。现有 checked-in live config 仍全部为 `parallel=1`，P8-01..P8-08 阻断关闭前不得再次启动
+  `parallel>1` 真实订单，用户也未批准合并该分支；PR #11 后续需按新 schema 单独升级。完整 contract、
+  incident、问题清单、证据路径和验收条件见 `docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。
 - 当前机器默认 `0-15` live reserved、`16-31` test/diagnostics/benchmark；kernel isolation/IRQ 调优仍是候选方案。
 - Gate/Bitget 交易链路 L3 性能优化已完成原暂停点的 Gate 第 5 组、Bitget、
   parser → SHM → runtime、测试、replay 和 review，并累计接受 10 项生产优化。最新
@@ -196,9 +199,11 @@ rg 'aquila_evaluation' core exchange tools
    单边 stale BBO。
 4. Fillability：普通 BTC touch probe 的 99% 不能外推到 signal-conditioned LeadLag；按 fillability 文档的 row/group、BBO stage 和
    lifecycle 口径复查。
-5. LeadLag parallel fixed-slot：先 review PR #13（`feature/lead-lag-parallel-fixed-slot-v4`）的 fixed-slot、mismatch reconcile 和
-   `group_id/submitted_v2` contract，再与用户单独确定测试阶梯；在 fresh benchmark/replay/live 证据之前，不把基础设施解释为
-   `parallel > 1` 的时延、fillability、PnL 或风险收益结论，现有 live config 保持 `parallel=1`。
+5. LeadLag parallel fixed-slot：按专题文档的 `P8-01 → P8-02/P8-03 → P8-04/P8-05 → P8-06 →
+   P8-07/P8-08 → P8-10 → P8-09` 顺序关闭 2026-07-23/24 P8 incident；先处理跨 run
+   `clientOid` 唯一性，再处理 gateway aging/UnknownResult、strategy handoff、guard signal cleanup 和监控。
+   P8-01..P8-08 阻断关闭并取得 fresh 非实盘证据前，不合并 PR #13、不再次启动 `parallel>1` 真实订单，
+   checked-in live config 保持 `parallel=1`。
 6. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
 7. 性能/CPU：numeric request 专用 worktree 已完成 local ID、final JSON writer 和
    decimal writer 的后续非拓扑筛选，候选均因完整链或相邻路径回退而撤销。下一阶段从
@@ -234,8 +239,10 @@ LeadLag `parallel > 1` 基础设施在 PR #13（`feature/lead-lag-parallel-fixed
 `(symbol_id, group_id)`、runtime-local `group_index`、SHM v4、mismatch reconcile 和 `submitted_v2`
 report schema 已实现。分支已同步 `main@87bdc08`，并完成 synthetic/真实双侧行情离线 replay、focused
 Debug/Release/ASAN/SHM tests 和 production-like A/B benchmark；详细结果和本地证据路径只维护在
-`docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。现有 live config 仍为 `parallel=1`，没有
-`parallel>1` 真实订单证据，当前不要合并 PR #13，也不要直接启动真实订单。
+`docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。2026-07-23/24 P8 live 达到容量 8，但因跨 run
+`clientOid` 复用、8 个 unresolved orders、INTC 残仓、watchdog 漏报和 guard `SIGTERM` cleanup 失效，
+最终依靠手工 emergency helper 才 `verified_flat`。按专题文档 P8-01..P8-10 逐项处理；P8-01..P8-08 关闭前
+不要合并 PR #13，也不要再次启动 `parallel>1` 真实订单。
 
 LeadLag cold submit 的 PR #14 / #15 已合入 main。PR #15 只保留已通过五组 paired endpoint A/B 的成功
 `lead_lag_order_intent` 删除；两类 global-risk prefetch 均已证明回退并撤销。继续性能工作先读
